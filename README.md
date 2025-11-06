@@ -2,7 +2,7 @@
 ## Pipeline description
 This repository contains scripts and configuration files for running the [`nf-core/sarek`](https://nf-co.re/sarek/) pipeline with custom settings for germline whole-exome sequencing (WES) analysis. It also contains further scripts for downstream processing and filtering. 
 
-### Note: At the moment the steps are expected to be run in order and won't work independenlty due to the directory structure. I plan to make them more independent in the future. 
+*Note: At the moment the steps are expected to be run in order and won't work independenlty due to the directory structure. I plan to make them more independent in the future.*
 
 ---
 

@@ -6,7 +6,7 @@ Created On   : 22/09/2025
 Last Modified: 02/10/2025, 22/10/2025, 04/11/2025
 
 Description: 
-Run full nf-core/sarek pipeline for germline data (from FASTQs to annotated VCFs) using a JSON configuration file for all paths, VEP plugins, and dbNSFP settings.
+Run full nf-core/sarek pipeline for germline data (from FASTQs to annotated VCFs) using a JSON configuration file (02_vep_settings_plugins_paths.json) for all paths, VEP plugins, and dbNSFP settings.
 
 Usage:
 python s02_run_sarek_full_germline.py \
@@ -27,7 +27,7 @@ conda, nextflow
 
 Notes to user:
 # Configuration file: 
-# User will need to modify the configuration file (s02_run_sarek_full_germline.json) to set paths to reference databases, VEP plugins and columns needed for dbNSFP
+# User will need to modify the configuration file (s02_vep_settings_plugins_paths.json) to set paths to reference databases, VEP plugins and columns needed for dbNSFP
 # If the dbBSFP resource is used, please check whether a commercial license is required, if this is not used pleased modify the configuration file to exclude.
 
 # VCFTOOLS_TSTV_COUNT crashes and pipeline fails: 

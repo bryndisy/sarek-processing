@@ -1,45 +1,33 @@
 # 🧬 Run nf-core/sarek and process output 
+## Pipeline description
+This repository contains scripts and configuration files for running the [`nf-core/sarek`](https://nf-co.re/sarek/) pipeline with custom settings for germline whole-exome sequencing (WES) analysis. It also contains further scripts for downstream processing and filtering. 
 
-This repository contains scripts and configuration files for running the [`nf-core/sarek`](https://nf-co.re/sarek/) pipeline with custom settings for whole-exome sequencing (WES) analysis. It also contains further scripts for downstream processing. 
+### Note: At the moment the steps are expected to be run in order and won't work independenlty due to the directory structure. I plan to make them more independent in the future. 
 
 ---
 
 ## Steps
 
-- Step 1: [`s01_generate_sarek_fastq_input.py`](https://github.com/bryndisy/scripts/blob/main/sarek_run_and_process/s01_generate_sarek_fastq_input.py)
-This script searches directory containing FASTQ files and generates the input .csv file required to run the full nf-core/sarek germline pipeline from the FASTQ stage. Handles different possible naming conventions of FASTQ files, compressed and uncompressed (.fastq, .fastg.gz, .fq, .fq.gz). 
-Checks for missing R2, only accepts pairs of R1 and R2 for the input and keeps tabs on any unmatched.
+- Step 1: [`s01_generate_sarek_fastq_input.py`](https://github.com/bryndisy/sarek-processing/blob/main/s01_generate_sarek_fastq_input.py)
+This script searches a directory containing FASTQ files and generates the input .csv file required to run the full nf-core/sarek germline pipeline from the FASTQ stage. 
 
-### Usage:
-```shell
-python s01_generate_sarek_fastq_input.py -p <project> -f <fastq_dir> -o <base_dir>
-```
-    - project: project name, used to create directories, and add to file names and logs 
-    - fastq_dir: path to directory with FASTQ files
-    - base_dir: path to base directory (subdirectories will be created based on project name etc)
-
-- Step 2: [`s01_generate_sarek_fastq_input.py`](https://github.com/bryndisy/scripts/blob/main/sarek_run_and_process/s01_generate_sarek_fastq_input.py)
+- Step 2a: [`s02_run_sarek_full_germline.py`](https://github.com/bryndisy/sarek-processing/blob/main/s02_run_sarek_full_germline.py)
 This scripts runs the full nf-core/sarek pipeline for germline data (from FASTQs to annotated VCFs) using a JSON configuration file for all paths, VEP plugins, and dbNSFP settings.
 
-```shell
-python s02_run_sarek_full_germline.py \
-  -p <project> \
-  -i <input_file> \
-  -o <base_dir> \
-  -e <conda_env> \
-  --config <config_file>
-```
-    - project: project name, used to create directories, and add to file names and logs
-    - input_file: path to fastq input file required for sarek (generated in Step 1)
-    - base_dir: path to base directory (subdirectories will be created based on project name etc)
-    - config_file: .json configuration file with reference databases, vep plugins etc
-    - conda_env: name of conda environment with nextflow installed (optional)
+- Step 2b: [`s02_run_sarek_annotation.py`](https://github.com/bryndisy/sarek-processing/blob/main/s02_run_sarek_annotation.py)
+This script runs the nf-core/sarek pipeline from the annotation step using a JSON configuration file for all paths, VEP plugins, and dbNSFP settings.
 
+- Step 3: [`s03_filter_vcf_pass.py`](https://github.com/bryndisy/sarek-processing/blob/main/s03_filter_vcf_pass.py)
+This script filters VCFs in a directory to keep only variants with FILTER == PASS
 
-- Step 3: 
+- Step 4: [`s04_split_vep.py`](https://github.com/bryndisy/sarek-processing/blob/main/s04_split_vep.py)
+This script splits up VEP annotations using bcftools +split-vep, it removes the extra CSQ column and filters on canonical transcripts. 
 
-- Step 4: 
+- Step 5: [`s05_filter_impact.py`](https://github.com/bryndisy/sarek-processing/blob/main/s05_filter_impact.py)
+This script splits filters VCF for HIGH and MODERATE impact variants.
 
-- Step 5: 
+- Step 6: [`s06_select_vep_cols.py`](https://github.com/bryndisy/sarek-processing/blob/main/s06_select_vep_cols.py)
+This script outputs .tsv with each sample per line with their variant and genotype and selected VEP columns of interest from the annotated VCF. 
 
-- Step 6: 
+- Extra helper script (if needed): [`s00_bcftools_include_samples.py`](https://github.com/bryndisy/sarek-processing/blob/main/s00_bcftools_include_samples.py)
+This script filters out specific samples, only keeps samples in sample_list.txt and creates new VCF with these. 

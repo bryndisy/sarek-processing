@@ -6,7 +6,7 @@ Created On   : 04/11/2025
 Last Modified: 
 
 Description: 
-Run nf-core/sarek pipeline from annotation step using a JSON configuration file for all paths, VEP plugins, and dbNSFP settings.
+Run nf-core/sarek pipeline from annotation step using a JSON configuration file (s02_vep_settings_plugins_paths.json) for all paths, VEP plugins, and dbNSFP settings.
 
 Usage:
 python s02_run_sarek_annotation.py \
@@ -27,7 +27,7 @@ conda, nextflow
 
 Notes to user:
 # Configuration file: 
-# User will need to modify the configuration file (s02_run_sarek_full_germline.json) to set paths to reference databases, VEP plugins and columns needed for dbNSFP
+# User will need to modify the configuration file (s02_vep_settings_plugins_paths.json) to set paths to reference databases, VEP plugins and columns needed for dbNSFP
 # If the dbBSFP resource is used, please check whether a commercial license is required, if this is not used pleased modify the configuration file to exclude.
 
 """

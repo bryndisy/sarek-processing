@@ -7,7 +7,8 @@ Created On   : 01/10/2025
 Last Modified: 04/11/2025
 
 Description: 
-Select desired VEP columns from annotated VCF and output as .txt 
+Output .tsv with each sample per line with their variant and genotype and selected VEP columns of interest from annotated VCF. 
+This can be used for further processing and filtering in R.  
 Uses bcftools from a conda environment (user needs to create this locally, e.g. conda create -n env_bcftools -c bioconda -c conda-forge bcftools).
 
 Note for user/User input required: 

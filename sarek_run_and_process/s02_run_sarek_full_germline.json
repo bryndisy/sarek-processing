@@ -1,0 +1,23 @@
+{
+    "fasta": "/data/Resources/References/hg38.GATK/hg38.GATK.fa",
+    "fasta_fai": "/data/Resources/References/hg38.GATK/hg38.GATK.fa.fai",
+    "dict": "/data/Resources/References/hg38.GATK/hg38.GATK.dict",
+    "vep_cache": "/home/by215/.vep",
+    "vep_plugins": {
+        "REVEL": "/home/by215/.vep/plugin_data/REVEL_v1.3/new_tabbed_revel_grch38.tsv.gz",
+        "CADD": [
+            "/home/by215/.vep/plugin_data/CADDv1.7_hg38/whole_genome_SNVs.tsv.gz",
+            "/home/by215/.vep/plugin_data/CADDv1.7_hg38/gnomad.genomes.r4.0.indel.tsv.gz"
+        ]
+    },
+    "dbnsfp": "/home/by215/Resources/Databases/dbNSFP/dbNSFP5.1a/dbNSFP_for_VEP_SnpSift/dbNSFP5.1a_grch38.gz",
+    "dbnsfp_tbi": "/home/by215/Resources/Databases/dbNSFP/dbNSFP5.1a/dbNSFP_for_VEP_SnpSift/dbNSFP5.1a_grch38.gz.tbi",
+    "dbnsfp_fields": [
+        "clinvar_id","clinvar_clnsig","clinvar_trait","clinvar_review",
+        "MutationTaster_score","MutationTaster_pred","MetaSVM_score","MetaSVM_pred",
+        "AlphaMissense_score","AlphaMissense_pred","gnomAD4.1_joint_AC","gnomAD4.1_joint_AN",
+        "gnomAD4.1_joint_AF","gnomAD4.1_joint_nhomalt","gnomAD4.1_joint_POPMAX_AC",
+        "gnomAD4.1_joint_POPMAX_AC","gnomAD4.1_joint_POPMAX_AN","gnomAD4.1_joint_POPMAX_AF",
+        "gnomAD4.1_joint_POPMAX_nhomalt"
+    ]
+}

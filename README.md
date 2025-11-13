@@ -9,25 +9,25 @@ This repository contains scripts and configuration files for running the [`nf-co
 ## Steps
 
 - Step 1: [`s01_generate_sarek_fastq_input.py`](https://github.com/bryndisy/sarek-processing/blob/main/s01_generate_sarek_fastq_input.py)
-This script searches a directory containing FASTQ files and generates the input .csv file required to run the full nf-core/sarek germline pipeline from the FASTQ stage. 
+Searches a directory containing FASTQ files and generates the input .csv file required to run the full nf-core/sarek germline pipeline from the FASTQ stage. 
 
 - Step 2a: [`s02_run_sarek_full_germline.py`](https://github.com/bryndisy/sarek-processing/blob/main/s02_run_sarek_full_germline.py)
-This scripts runs the full nf-core/sarek pipeline for germline data (from FASTQs to annotated VCFs) using a JSON configuration file for all paths, VEP plugins, and dbNSFP settings.
+Runs the full nf-core/sarek pipeline for germline data (from FASTQs to annotated VCFs) using a JSON configuration file for all paths, VEP plugins, and dbNSFP settings.
 
 - Step 2b: [`s02_run_sarek_annotation.py`](https://github.com/bryndisy/sarek-processing/blob/main/s02_run_sarek_annotation.py)
-This script runs the nf-core/sarek pipeline from the annotation step using a JSON configuration file for all paths, VEP plugins, and dbNSFP settings.
+Runs the nf-core/sarek pipeline from the annotation step using a JSON configuration file for all paths, VEP plugins, and dbNSFP settings.
 
 - Step 3: [`s03_filter_vcf_pass.py`](https://github.com/bryndisy/sarek-processing/blob/main/s03_filter_vcf_pass.py)
-This script filters VCFs in a directory to keep only variants with FILTER == PASS
+Filters VCFs in a directory to keep only variants with FILTER == PASS
 
 - Step 4: [`s04_split_vep.py`](https://github.com/bryndisy/sarek-processing/blob/main/s04_split_vep.py)
-This script splits up VEP annotations using bcftools +split-vep, it removes the extra CSQ column and filters on canonical transcripts. 
+Splits up VEP annotations using bcftools +split-vep, it removes the extra CSQ column and filters on canonical transcripts. 
 
 - Step 5: [`s05_filter_impact.py`](https://github.com/bryndisy/sarek-processing/blob/main/s05_filter_impact.py)
-This script splits filters VCF for HIGH and MODERATE impact variants.
+Splits filters VCF for HIGH and MODERATE impact variants.
 
 - Step 6: [`s06_select_vep_cols.py`](https://github.com/bryndisy/sarek-processing/blob/main/s06_select_vep_cols.py)
-This script outputs .tsv with each sample per line with their variant and genotype and selected VEP columns of interest from the annotated VCF. 
+Outputs .tsv with each sample per line with their variant and genotype and selected VEP columns of interest from the annotated VCF. 
 
 - Extra helper script (if needed): [`s00_bcftools_include_samples.py`](https://github.com/bryndisy/sarek-processing/blob/main/s00_bcftools_include_samples.py)
-This script filters out specific samples, only keeps samples in sample_list.txt and creates new VCF with these. 
+Filters out specific samples, only keeps samples in sample_list.txt and creates new VCF with these. 

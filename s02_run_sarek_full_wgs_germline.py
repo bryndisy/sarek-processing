@@ -139,6 +139,27 @@ def main():
         handlers=[logging.FileHandler(log_file, mode="a"), logging.StreamHandler(sys.stdout)],
     )
 
+    # ----------------------------
+    # Force Singularity/Apptainer temp dirs away from /tmp (which is full)
+    # ----------------------------
+    sing_tmp = output_dir / "singularity_tmp"
+    sing_cache = output_dir / "singularity_cache"
+    sing_tmp.mkdir(parents=True, exist_ok=True)
+    sing_cache.mkdir(parents=True, exist_ok=True)
+
+    # Ensure Nextflow + Singularity tasks inherit these
+    os.environ["SINGULARITY_TMPDIR"] = str(sing_tmp)
+    os.environ["SINGULARITY_CACHEDIR"] = str(sing_cache)
+
+    # Crucial: many tools (and some Singularity operations) still use TMPDIR
+    os.environ["TMPDIR"] = str(sing_tmp)
+    os.environ["TMP"] = str(sing_tmp)
+    os.environ["TEMP"] = str(sing_tmp)
+
+    logging.info(f"Set SINGULARITY_TMPDIR={os.environ['SINGULARITY_TMPDIR']}")
+    logging.info(f"Set SINGULARITY_CACHEDIR={os.environ['SINGULARITY_CACHEDIR']}")
+    logging.info(f"Set TMPDIR={os.environ['TMPDIR']}")
+
     # Better Nextflow diagnostics unless already set
     os.environ.setdefault("NXF_OPTS", "-Dnextflow.trace.stack=true")
 
@@ -170,6 +191,14 @@ def main():
 
     # Temporary Nextflow config (pull timeout + VEP resources)
     tmp_cfg_text = f"""
+    env {{
+      SINGULARITY_TMPDIR   = '{output_dir / "singularity_tmp"}'
+      SINGULARITY_CACHEDIR = '{output_dir / "singularity_cache"}'
+      TMPDIR               = '{output_dir / "singularity_tmp"}'
+      TMP                  = '{output_dir / "singularity_tmp"}'
+      TEMP                 = '{output_dir / "singularity_tmp"}'
+    }}
+
     singularity {{
       pullTimeout = '{PULL_TIMEOUT}'
     }}
@@ -200,6 +229,8 @@ def main():
     start = time.time()
     cmd = build_nextflow_command(conda_env, input_file, output_dir, config, nextflow_config_file)
 
+    logging.info("Nextflow command:\n" + " ".join(cmd))
+    
     ok = run_command(cmd)  # expects True/False
     if not ok:
         logging.error("Nextflow command failed.")

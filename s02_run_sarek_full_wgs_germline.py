@@ -139,27 +139,6 @@ def main():
         handlers=[logging.FileHandler(log_file, mode="a"), logging.StreamHandler(sys.stdout)],
     )
 
-    # ----------------------------
-    # Force Singularity/Apptainer temp dirs away from /tmp (which is full)
-    # ----------------------------
-    sing_tmp = output_dir / "singularity_tmp"
-    sing_cache = output_dir / "singularity_cache"
-    sing_tmp.mkdir(parents=True, exist_ok=True)
-    sing_cache.mkdir(parents=True, exist_ok=True)
-
-    # Ensure Nextflow + Singularity tasks inherit these
-    os.environ["SINGULARITY_TMPDIR"] = str(sing_tmp)
-    os.environ["SINGULARITY_CACHEDIR"] = str(sing_cache)
-
-    # Crucial: many tools (and some Singularity operations) still use TMPDIR
-    os.environ["TMPDIR"] = str(sing_tmp)
-    os.environ["TMP"] = str(sing_tmp)
-    os.environ["TEMP"] = str(sing_tmp)
-
-    logging.info(f"Set SINGULARITY_TMPDIR={os.environ['SINGULARITY_TMPDIR']}")
-    logging.info(f"Set SINGULARITY_CACHEDIR={os.environ['SINGULARITY_CACHEDIR']}")
-    logging.info(f"Set TMPDIR={os.environ['TMPDIR']}")
-
     # Better Nextflow diagnostics unless already set
     os.environ.setdefault("NXF_OPTS", "-Dnextflow.trace.stack=true")
 
@@ -192,11 +171,11 @@ def main():
     # Temporary Nextflow config (pull timeout + VEP resources)
     tmp_cfg_text = f"""
     env {{
-      SINGULARITY_TMPDIR   = '{output_dir / "singularity_tmp"}'
-      SINGULARITY_CACHEDIR = '{output_dir / "singularity_cache"}'
-      TMPDIR               = '{output_dir / "singularity_tmp"}'
-      TMP                  = '{output_dir / "singularity_tmp"}'
-      TEMP                 = '{output_dir / "singularity_tmp"}'
+        SINGULARITY_TMPDIR   = '/home/by215/singularity_tmp'
+        SINGULARITY_CACHEDIR = '/home/by215/singularity_cache'
+        TMPDIR               = '/home/by215/singularity_tmp'
+        TMP                  = '/home/by215/singularity_tmp'
+        TEMP                 = '/home/by215/singularity_tmp'
     }}
 
     singularity {{
@@ -231,6 +210,32 @@ def main():
 
     logging.info("Nextflow command:\n" + " ".join(cmd))
     
+    # ----------------------------
+    # Force Singularity/Apptainer temp dirs away from /tmp (which is full)
+    # ----------------------------
+    #sing_tmp = output_dir / "singularity_tmp"
+    #sing_cache = output_dir / "singularity_cache"
+    #sing_tmp.mkdir(parents=True, exist_ok=True)
+    #sing_cache.mkdir(parents=True, exist_ok=True)
+
+    #os.environ["SINGULARITY_TMPDIR"] = str(sing_tmp)
+    #os.environ["SINGULARITY_CACHEDIR"] = str(sing_cache)
+    #os.environ["TMPDIR"] = str(sing_tmp)
+    #os.environ["TMP"] = str(sing_tmp)
+    #os.environ["TEMP"] = str(sing_tmp)
+
+    os.environ["SINGULARITY_TMPDIR"] = "/home/by215/singularity_tmp"
+    os.environ["SINGULARITY_CACHEDIR"] = "/home/by215/singularity_cache"
+    os.environ["TMPDIR"] = "/home/by215/singularity_tmp"
+    os.environ["TMP"] = "/home/by215/singularity_tmp"
+    os.environ["TEMP"] = "/home/by215/singularity_tmp"
+
+
+    logging.info(f"SINGULARITY_TMPDIR={os.environ['SINGULARITY_TMPDIR']}")
+    logging.info(f"SINGULARITY_CACHEDIR={os.environ['SINGULARITY_CACHEDIR']}")
+    logging.info(f"TMPDIR={os.environ['TMPDIR']}")
+
+
     ok = run_command(cmd)  # expects True/False
     if not ok:
         logging.error("Nextflow command failed.")

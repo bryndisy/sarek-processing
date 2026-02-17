@@ -47,6 +47,7 @@ Notes to user:
 
 """
 
+#!/usr/bin/env python3
 import sys
 import os
 import time
@@ -61,16 +62,23 @@ import logging
 from utils import format_runtime, check_conda_env, run_command
 
 # Resources for VEP and singularity (adjust here if needed)
-VEP_TIME   = "48h"
-VEP_CPUS   = 8
+VEP_TIME = "48h"
+VEP_CPUS = 8
 VEP_MEMORY = "64 GB"
 PULL_TIMEOUT = "60m"
 
 # ----------------------------
-# Helpers: Build commands and arguments 
+# Helpers: Build commands and arguments
 # ----------------------------
 
 def build_vep_custom_args(plugins: dict) -> str:
+    """
+    Build --vep_custom_args from a dict like:
+      {
+        "dbNSFP": "dbNSFP5.1a_grch38.gz,field1,field2,...",
+        "CADD": ["/path/snv.tsv.gz", "/path/indel.tsv.gz"]
+      }
+    """
     parts = ["--everything", "--total_length", "--offline", "--cache"]
     for name, path in plugins.items():
         if isinstance(path, (list, tuple)):
@@ -79,32 +87,66 @@ def build_vep_custom_args(plugins: dict) -> str:
             parts.append(f"--plugin {name},{path}")
     return " ".join(parts)
 
-def build_nextflow_command(env_name, input_file: Path, outdir: Path, config: dict, nextflow_config_file: str) -> list[str]:
+
+def build_nextflow_command(
+    env_name: str | None,
+    input_file: Path,
+    outdir: Path,
+    config: dict,
+    nextflow_cfg_path: str,
+    extra_config_path: str | None = None,
+) -> list[str]:
+    """Build the Nextflow command for nf-core/sarek."""
     vep_args = build_vep_custom_args(config["vep_plugins"])
+
     prefix = ["conda", "run", "-n", env_name] if env_name else []
-    return prefix + [
+
+    cmd = prefix + [
         "nextflow", "run", "nf-core/sarek", "-r", "3.5.1", "-resume",
         "-profile", "singularity",
-        "-c", nextflow_config_file,
-        "-c", "disable_vcftools.config",
+    ]
+
+    # Include your optional config (eg disable vcftools) if present
+    if extra_config_path:
+        cmd += ["-c", extra_config_path]
+
+    # Include our generated temp config (env vars, pullTimeout, process resources)
+    cmd += ["-c", nextflow_cfg_path]
+
+    # Pipeline args
+    cmd += [
         "--input", str(input_file),
         "--outdir", str(outdir / "sarek_results"),
         "--genome", "GATK.GRCh38",
+
+        # Full pipeline WGS germline (as per your earlier full runs)
         "--step", "mapping",
         "--aligner", "bwa-mem",
         "--joint_germline", "true",
-        "--vep_cache", config["vep_cache"],
+
+        # WES toggle: keep/remove depending on your dataset
+        "--wes", "true",
+
+        # Tools
         "--tools", "haplotypecaller,vep",
+
+        # VEP resources/settings
+        "--vep_cache", config["vep_cache"],
         "--vep_include_fasta", "true",
         "--fasta", config["fasta"],
         "--fasta_fai", config["fasta_fai"],
         "--dict", config["dict"],
         "--vep_custom_args", vep_args,
+
+        # dbNSFP settings
         "--vep_dbnsfp", "true",
         "--dbnsfp", config["dbnsfp"],
         "--dbnsfp_tbi", config["dbnsfp_tbi"],
         "--dbnsfp_fields", ",".join(config["dbnsfp_fields"]),
     ]
+
+    return cmd
+
 
 # ----------------------------
 # Main
@@ -113,7 +155,7 @@ def build_nextflow_command(env_name, input_file: Path, outdir: Path, config: dic
 def main():
     parser = argparse.ArgumentParser(description="Run nf-core/sarek pipeline with JSON config")
     parser.add_argument("-p", "--project", required=True, help="Project name")
-    parser.add_argument("-i", "--input", required=True, help="Sarek input CSV with FASTQs")
+    parser.add_argument("-i", "--input", required=True, help="Sarek input CSV")
     parser.add_argument("-o", "--base-dir", required=True, help="Base output directory")
     parser.add_argument("--config", required=True, help="JSON config with paths, VEP plugins, dbNSFP settings")
     parser.add_argument("-e", "--env", default=None, help="Conda environment name containing Nextflow (optional)")
@@ -121,10 +163,10 @@ def main():
 
     # Normalise paths and names
     script_name = Path(sys.argv[0]).stem
-    project     = args.project
-    input_file  = Path(args.input).resolve()
-    base_dir    = Path(args.base_dir).resolve()
-    output_dir  = (base_dir / project / "output").resolve()
+    project = args.project
+    input_file = Path(args.input).resolve()
+    base_dir = Path(args.base_dir).resolve()
+    output_dir = (base_dir / project / "output").resolve()
 
     # Prepare directories
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -168,53 +210,12 @@ def main():
         logging.error(f"Conda environment '{conda_env}' does not exist.")
         sys.exit(1)
 
-    # Temporary Nextflow config (pull timeout + VEP resources)
-    tmp_cfg_text = f"""
-    env {{
-        SINGULARITY_TMPDIR   = '/home/by215/singularity_tmp'
-        SINGULARITY_CACHEDIR = '/home/by215/singularity_cache'
-        TMPDIR               = '/home/by215/singularity_tmp'
-        TMP                  = '/home/by215/singularity_tmp'
-        TEMP                 = '/home/by215/singularity_tmp'
-    }}
-
-    singularity {{
-      pullTimeout = '{PULL_TIMEOUT}'
-    }}
-
-    process {{
-      withName: 'ENSEMBLVEP_VEP' {{
-        time   = '{VEP_TIME}'
-        cpus   = {VEP_CPUS}
-        memory = '{VEP_MEMORY}'
-      }}
-    }}
-    """.strip()
-
-    with tempfile.NamedTemporaryFile(mode="w", delete=False) as tmp:
-        tmp.write(tmp_cfg_text + "\n")
-        tmp.flush()
-        nextflow_config_file = tmp.name
-
-    logging.info("# --- Run Sarek pipeline from annotation step ---")
-    logging.info(f"Project         : {project}")
-    logging.info(f"Sarek input file: {input_file}")
-    logging.info(f"Output dir      : {output_dir}")
-    logging.info(f"Using conda env : {conda_env if conda_env else '(none)'}")
-    logging.info(f"VEP config  : {config}")
-    logging.info(f"Temp Nextflow config  : {nextflow_config_file}")
-    logging.info(f"NXF_OPTS        : {os.environ.get('NXF_OPTS')}")
-
-    start = time.time()
-    cmd = build_nextflow_command(conda_env, input_file, output_dir, config, nextflow_config_file)
-
-    logging.info("Nextflow command:\n" + " ".join(cmd))
-    
     # ----------------------------
-    # Force Singularity/Apptainer temp dirs away from /tmp (which is full)
+    # Force Singularity temp dirs away from /tmp (which is full)
+    # (Use ONE consistent location everywhere)
     # ----------------------------
-    sing_tmp = output_dir / "singularity_tmp"
-    sing_cache = output_dir / "singularity_cache"
+    sing_tmp = Path("/home/by215/singularity_tmp")
+    sing_cache = Path("/home/by215/singularity_cache")
     sing_tmp.mkdir(parents=True, exist_ok=True)
     sing_cache.mkdir(parents=True, exist_ok=True)
 
@@ -224,17 +225,74 @@ def main():
     os.environ["TMP"] = str(sing_tmp)
     os.environ["TEMP"] = str(sing_tmp)
 
-    #os.environ["SINGULARITY_TMPDIR"] = "/home/by215/singularity_tmp"
-    #os.environ["SINGULARITY_CACHEDIR"] = "/home/by215/singularity_cache"
-    #os.environ["TMPDIR"] = "/home/by215/singularity_tmp"
-    #os.environ["TMP"] = "/home/by215/singularity_tmp"
-    #os.environ["TEMP"] = "/home/by215/singularity_tmp"
+    # ----------------------------
+    # Temporary Nextflow config (pull timeout + VEP resources)
+    # ----------------------------
+    tmp_cfg_text = f"""
+env {{
+  SINGULARITY_TMPDIR   = '{sing_tmp}'
+  SINGULARITY_CACHEDIR = '{sing_cache}'
+  TMPDIR               = '{sing_tmp}'
+  TMP                  = '{sing_tmp}'
+  TEMP                 = '{sing_tmp}'
+}}
 
+process {{
+  // Belt-and-braces: ensure task env gets these even if env{{}} is ignored
+  environment = [
+    'SINGULARITY_TMPDIR': '{sing_tmp}',
+    'SINGULARITY_CACHEDIR': '{sing_cache}',
+    'TMPDIR': '{sing_tmp}',
+    'TMP': '{sing_tmp}',
+    'TEMP': '{sing_tmp}'
+  ]
 
-    logging.info(f"SINGULARITY_TMPDIR={os.environ['SINGULARITY_TMPDIR']}")
-    logging.info(f"SINGULARITY_CACHEDIR={os.environ['SINGULARITY_CACHEDIR']}")
-    logging.info(f"TMPDIR={os.environ['TMPDIR']}")
+  withName: 'ENSEMBLVEP_VEP' {{
+    time   = '{VEP_TIME}'
+    cpus   = {VEP_CPUS}
+    memory = '{VEP_MEMORY}'
+  }}
+}}
 
+singularity {{
+  pullTimeout = '{PULL_TIMEOUT}'
+}}
+""".strip()
+
+    with tempfile.NamedTemporaryFile(mode="w", delete=False) as tmp:
+        tmp.write(tmp_cfg_text + "\n")
+        tmp.flush()
+        nextflow_config_file = tmp.name
+
+    # Optional extra config (eg disable vcftools); include only if it exists
+    extra_config = "disable_vcftools.config"
+    extra_config_path = str(Path(extra_config).resolve()) if Path(extra_config).is_file() else None
+    if extra_config_path is None:
+        logging.warning(f"Optional config not found (will continue without it): {extra_config}")
+
+    logging.info("# --- Run full sarek pipeline for germline data ---")
+    logging.info(f"Project           : {project}")
+    logging.info(f"Timestamp         : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logging.info(f"Sarek input file  : {input_file}")
+    logging.info(f"Output dir        : {output_dir}")
+    logging.info(f"Using conda env   : {conda_env if conda_env else '(none)'}")
+    logging.info(f"NXF_OPTS          : {os.environ.get('NXF_OPTS')}")
+    logging.info(f"SINGULARITY_TMPDIR: {os.environ.get('SINGULARITY_TMPDIR')}")
+    logging.info(f"TMPDIR            : {os.environ.get('TMPDIR')}")
+    logging.info(f"Temp NF config    : {nextflow_config_file}")
+
+    start = time.time()
+
+    cmd = build_nextflow_command(
+        env_name=conda_env,
+        input_file=input_file,
+        outdir=output_dir,
+        config=config,
+        nextflow_cfg_path=nextflow_config_file,
+        extra_config_path=extra_config_path,
+    )
+
+    logging.info("Nextflow command:\n" + " ".join(cmd))
 
     ok = run_command(cmd)  # expects True/False
     if not ok:
@@ -251,7 +309,8 @@ def main():
 
     logging.info(f"# Runtime: {format_runtime(time.time() - start)}")
     logging.info("# --- End of run ---")
-    print(f"Running Sarek annotaion completed. Log written to {log_file}")
+    print(f"Running sarek pipeline completed. Log written to {log_file}")
+
 
 if __name__ == "__main__":
     main()

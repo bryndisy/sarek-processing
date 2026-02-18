@@ -253,36 +253,26 @@ process {{
   ]
 
   // Reduce BWA thread usage
-  withName: 'BWAMEM1_MEM' {{
+  withName: '/.*BWAMEM1_MEM$/' {{
     cpus = 12
   }}
 
-  // MarkDuplicates (name can vary; include both common ones)
-  withName: 'GATK4_MARKDUPLICATES' {{
-    cpus   = 4
-    memory = '16 GB'
-    time   = '24h'
-  }}
-  withName: 'PICARD_MARKDUPLICATES' {{
+  // MarkDuplicates
+  withName: '/.*MARKDUPLICATES$/' {{
     cpus   = 4
     memory = '16 GB'
     time   = '24h'
   }}
 
-  // HaplotypeCaller (name can vary; include common patterns)
-  withName: 'HAPLOTYPECALLER' {{
-    cpus   = 8
-    memory = '24 GB'
-    time   = '24h'
-  }}
-  withName: 'GATK4_HAPLOTYPECALLER' {{
+  // HaplotypeCaller
+  withName: '/.*HAPLOTYPECALLER$/' {{
     cpus   = 8
     memory = '24 GB'
     time   = '24h'
   }}
 
   // VEP
-  withName: 'ENSEMBLVEP_VEP' {{
+  withName: '/.*ENSEMBLVEP_VEP$/' {{
     time   = '{VEP_TIME}'
     cpus   = {VEP_CPUS}
     memory = '{VEP_MEMORY}'

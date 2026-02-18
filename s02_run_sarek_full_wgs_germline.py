@@ -237,6 +237,11 @@ env {{
   TEMP                 = '{sing_tmp}'
 }}
 
+executor {{
+  name = 'local'
+  cpus = 24
+}}
+
 process {{
   // Belt-and-braces: ensure task env gets these even if env{{}} is ignored
   environment = [
@@ -247,6 +252,36 @@ process {{
     'TEMP': '{sing_tmp}'
   ]
 
+  // Reduce BWA thread usage
+  withName: 'BWAMEM1_MEM' {{
+    cpus = 12
+  }}
+
+  // MarkDuplicates (name can vary; include both common ones)
+  withName: 'GATK4_MARKDUPLICATES' {{
+    cpus   = 4
+    memory = '16 GB'
+    time   = '24h'
+  }}
+  withName: 'PICARD_MARKDUPLICATES' {{
+    cpus   = 4
+    memory = '16 GB'
+    time   = '24h'
+  }}
+
+  // HaplotypeCaller (name can vary; include common patterns)
+  withName: 'HAPLOTYPECALLER' {{
+    cpus   = 8
+    memory = '24 GB'
+    time   = '24h'
+  }}
+  withName: 'GATK4_HAPLOTYPECALLER' {{
+    cpus   = 8
+    memory = '24 GB'
+    time   = '24h'
+  }}
+
+  // VEP
   withName: 'ENSEMBLVEP_VEP' {{
     time   = '{VEP_TIME}'
     cpus   = {VEP_CPUS}
@@ -258,6 +293,8 @@ singularity {{
   pullTimeout = '{PULL_TIMEOUT}'
 }}
 """.strip()
+
+
 
     with tempfile.NamedTemporaryFile(mode="w", delete=False) as tmp:
         tmp.write(tmp_cfg_text + "\n")

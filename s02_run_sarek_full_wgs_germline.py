@@ -251,28 +251,28 @@ process {{
     'TMP': '{sing_tmp}',
     'TEMP': '{sing_tmp}'
   ]
-
+	
   // Reduce BWA thread usage
-  withName: '/.*BWAMEM1_MEM$/' {{
+  withName: 'NFCORE_SAREK:SAREK:FASTQ_ALIGN_BWAMEM_MEM2_DRAGMAP_SENTIEON:BWAMEM1_MEM' {{
     cpus = 12
   }}
 
   // MarkDuplicates
-  withName: '/.*MARKDUPLICATES$/' {{
+  withName: 'NFCORE_SAREK:SAREK:BAM_MARKDUPLICATES:GATK4_MARKDUPLICATES' {{
     cpus   = 4
     memory = '16 GB'
     time   = '24h'
   }}
 
   // HaplotypeCaller
-  withName: '/.*HAPLOTYPECALLER$/' {{
+  withName: 'NFCORE_SAREK:SAREK:BAM_VARIANT_CALLING_GERMLINE_ALL:BAM_VARIANT_CALLING_HAPLOTYPECALLER:GATK4_HAPLOTYPECALLER' {{
     cpus   = 8
     memory = '24 GB'
     time   = '24h'
   }}
-
+	
   // VEP
-  withName: '/.*ENSEMBLVEP_VEP$/' {{
+  withName: 'NFCORE_SAREK:SAREK:VCF_ANNOTATE_ALL:VCF_ANNOTATE_ENSEMBLVEP:ENSEMBLVEP_VEP' {{
     time   = '{VEP_TIME}'
     cpus   = {VEP_CPUS}
     memory = '{VEP_MEMORY}'

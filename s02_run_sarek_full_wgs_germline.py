@@ -3,7 +3,7 @@
 File Name    : s02_run_sarek_full_wgs_germline.py
 Author       : Bryndis Yngvadottir
 Created On   : 22/09/2025
-Last Modified: 02/10/2025, 22/10/2025, 04/11/2025
+Last Modified: 02/10/2025, 22/10/2025, 04/11/2025, 24/02/2026
 
 Description: 
 Run full nf-core/sarek pipeline for germline data (from FASTQs to annotated VCFs) using a JSON configuration file (02_vep_settings_plugins_paths.json) for all paths, VEP plugins, and dbNSFP settings.

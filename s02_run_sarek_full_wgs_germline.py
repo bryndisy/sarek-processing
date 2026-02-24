@@ -103,7 +103,7 @@ def build_nextflow_command(
 
     cmd = prefix + [
         "nextflow", "run", "nf-core/sarek", "-r", "3.5.1", "-resume",
-        "-profile", "singularity",
+        "-profile", "singularity", "-work-dir", "/data/sarek_work_temp", 
     ]
 
     # Include your optional config (eg disable vcftools) if present
@@ -214,27 +214,27 @@ def main():
     # Force Singularity temp dirs away from /tmp (which is full)
     # (Use ONE consistent location everywhere)
     # ----------------------------
-    sing_tmp = Path("/home/by215/singularity_tmp")
-    sing_cache = Path("/home/by215/singularity_cache")
-    sing_tmp.mkdir(parents=True, exist_ok=True)
-    sing_cache.mkdir(parents=True, exist_ok=True)
+    #sing_tmp = Path("/home/by215/singularity_tmp")
+    #sing_cache = Path("/home/by215/singularity_cache")
+    #sing_tmp.mkdir(parents=True, exist_ok=True)
+    #sing_cache.mkdir(parents=True, exist_ok=True)
 
-    os.environ["SINGULARITY_TMPDIR"] = str(sing_tmp)
+    #os.environ["SINGULARITY_TMPDIR"] = str(sing_tmp)
+    #os.environ["SINGULARITY_CACHEDIR"] = str(sing_cache)
+    #os.environ["TMPDIR"] = str(sing_tmp)
+    #os.environ["TMP"] = str(sing_tmp)
+    #os.environ["TEMP"] = str(sing_tmp)
+
+    sing_cache = Path("/home/by215/singularity_cache")
+    sing_cache.mkdir(parents=True, exist_ok=True)
     os.environ["SINGULARITY_CACHEDIR"] = str(sing_cache)
-    os.environ["TMPDIR"] = str(sing_tmp)
-    os.environ["TMP"] = str(sing_tmp)
-    os.environ["TEMP"] = str(sing_tmp)
 
     # ----------------------------
     # Temporary Nextflow config (pull timeout + VEP resources)
     # ----------------------------
     tmp_cfg_text = f"""
 env {{
-  SINGULARITY_TMPDIR   = '{sing_tmp}'
   SINGULARITY_CACHEDIR = '{sing_cache}'
-  TMPDIR               = '{sing_tmp}'
-  TMP                  = '{sing_tmp}'
-  TEMP                 = '{sing_tmp}'
 }}
 
 executor {{
@@ -243,15 +243,6 @@ executor {{
 }}
 
 process {{
-  // Belt-and-braces: ensure task env gets these even if env{{}} is ignored
-  environment = [
-    'SINGULARITY_TMPDIR': '{sing_tmp}',
-    'SINGULARITY_CACHEDIR': '{sing_cache}',
-    'TMPDIR': '{sing_tmp}',
-    'TMP': '{sing_tmp}',
-    'TEMP': '{sing_tmp}'
-  ]
-	
   // Reduce BWA thread usage
   withName: 'NFCORE_SAREK:SAREK:FASTQ_ALIGN_BWAMEM_MEM2_DRAGMAP_SENTIEON:BWAMEM1_MEM' {{
     cpus = 12

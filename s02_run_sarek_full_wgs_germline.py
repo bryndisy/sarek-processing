@@ -124,9 +124,6 @@ def build_nextflow_command(
         "--aligner", "bwa-mem",
         "--joint_germline", "true",
 
-        # WES toggle: keep/remove depending on your dataset
-        "--wes", "true",
-
         # Tools
         "--tools", "haplotypecaller,vep",
 
@@ -257,8 +254,8 @@ process {{
 
   // HaplotypeCaller
   withName: 'NFCORE_SAREK:SAREK:BAM_VARIANT_CALLING_GERMLINE_ALL:BAM_VARIANT_CALLING_HAPLOTYPECALLER:GATK4_HAPLOTYPECALLER' {{
-    cpus   = 8
-    memory = '24 GB'
+    cpus   = 4
+    memory = '16 GB'
     time   = '24h'
   }}
 	

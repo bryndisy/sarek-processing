@@ -81,7 +81,8 @@ def select_columns(in_vcf, out_tsv, conda_env, config_file):
         str(in_vcf)
     ]
     logging.info(f"CMD: {' '.join(cmd)}")
-    result = subprocess.run(cmd, stdout=open(out_tsv, "a"), stderr=subprocess.PIPE, text=True)
+    with open(out_tsv, "a") as out:
+        result = subprocess.run(cmd, stdout=out, stderr=subprocess.PIPE, text=True)
 
     if result.returncode != 0:
         logging.error(f"bcftools query failed: {result.stderr}")
@@ -93,7 +94,7 @@ def select_columns(in_vcf, out_tsv, conda_env, config_file):
 # Main
 # ----------------------------
 def main():
-    parser = argparse.ArgumentParser(description="Filter VCFs on VEP IMPACT (keep MODERATE and HIGH)")
+    parser = argparse.ArgumentParser(description="Select VEP columns of interest from a VCF into a TSV")
     parser.add_argument("-p", "--project", required=True, help="Project name")
     parser.add_argument("-i", "--base-dir", required=True, help="Path to base directory (for file inputs and outputs)")
     parser.add_argument("-e", "--env", default="env_nf", help="Conda environment")
@@ -163,6 +164,14 @@ def main():
         logging.error("No filter_impact VCF files found in input directory.")
         sys.exit(1)
 
+    if len(vcfs) > 1:
+        logging.error(
+            f"Expected a single filter_impact VCF but found {len(vcfs)}: "
+            f"{[v.name for v in vcfs]}. Outputs use a fixed name and would be "
+            "overwritten; please run one project/VCF at a time."
+        )
+        sys.exit(1)
+
     success_count = fail_count = 0
     total = len(vcfs)
 
@@ -193,7 +202,7 @@ def main():
     logging.info(f"# Runtime: {format_runtime(duration)}")
     logging.info("# --- End of run ---")
 
-    print(f"Split VEP complete. Log written to {log_file}")
+    print(f"Selecting VEP columns complete. Log written to {log_file}")
 
 if __name__ == "__main__":
     main()

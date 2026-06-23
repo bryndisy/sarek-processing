@@ -17,7 +17,7 @@
         "MutationTaster_score","MutationTaster_pred","MetaSVM_score","MetaSVM_pred",
         "AlphaMissense_score","AlphaMissense_pred","gnomAD4.1_joint_AC","gnomAD4.1_joint_AN",
         "gnomAD4.1_joint_AF","gnomAD4.1_joint_nhomalt","gnomAD4.1_joint_POPMAX_AC",
-        "gnomAD4.1_joint_POPMAX_AC","gnomAD4.1_joint_POPMAX_AN","gnomAD4.1_joint_POPMAX_AF",
+        "gnomAD4.1_joint_POPMAX_AN","gnomAD4.1_joint_POPMAX_AF",
         "gnomAD4.1_joint_POPMAX_nhomalt"
     ]
 }

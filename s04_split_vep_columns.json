@@ -1,7 +1,8 @@
 {
   "columns": [
     "Allele",
-    "CANONICAL", 
+    "CANONICAL",
+    "MANE_SELECT",
     "Consequence",
     "IMPACT",
     "SYMBOL",

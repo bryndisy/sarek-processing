@@ -1,0 +1,55 @@
+{
+  "_comment": "Tunable weights/thresholds for s07_priority_score.py. Component weights sum to the max score (default 100). Each component is normalised to 0-1 then multiplied by its weight.",
+
+  "weights": {
+    "impact": 30,
+    "clinvar": 30,
+    "insilico": 25,
+    "rarity": 15
+  },
+
+  "impact_scores": {
+    "HIGH": 1.0,
+    "MODERATE": 0.6,
+    "LOW": 0.15,
+    "MODIFIER": 0.0
+  },
+
+  "clinvar_scores": {
+    "pathogenic": 1.0,
+    "likely_pathogenic": 0.8,
+    "conflicting": 0.4,
+    "uncertain": 0.3,
+    "likely_benign": 0.0,
+    "benign": 0.0
+  },
+
+  "insilico": {
+    "cadd_phred_cap": 40,
+    "components": {
+      "vep_REVEL": 1.0,
+      "vep_CADD_PHRED": 1.0,
+      "vep_AlphaMissense_score": 1.0
+    }
+  },
+
+  "rarity_af_field": "vep_gnomAD4.1_joint_POPMAX_AF",
+  "rarity_fallback_af_field": "vep_MAX_AF",
+  "rarity_bins": [
+    { "label": "novel",      "max_af": 0.0,    "score": 1.0 },
+    { "label": "ultra_rare", "max_af": 0.0001, "score": 0.9 },
+    { "label": "rare",       "max_af": 0.001,  "score": 0.6 },
+    { "label": "low_freq",   "max_af": 0.01,   "score": 0.3 },
+    { "label": "common",     "max_af": 1.0,    "score": 0.0 }
+  ],
+
+  "tiers": {
+    "benign_demote": true,
+    "tier1_high_impact_max_af": 0.001,
+    "tier2_revel_min": 0.7,
+    "tier2_cadd_min": 20,
+    "tier2_alphamissense_pred": "likely_pathogenic",
+    "tier2_max_af": 0.01,
+    "tier3_max_af": 0.05
+  }
+}

@@ -29,5 +29,8 @@ Splits filters VCF for HIGH and MODERATE impact variants.
 - Step 6: [`s06_select_vep_cols.py`](https://github.com/bryndisy/sarek-processing/blob/main/s06_select_vep_cols.py)
 Outputs .tsv with each sample per line with their variant and genotype and selected VEP columns of interest from the annotated VCF. 
 
+- Step 7: [`s07_priority_score.py`](https://github.com/bryndisy/sarek-processing/blob/main/s07_priority_score.py)
+Computes a 0–100 variant priority score and a discrete tier (1 = highest) from the Step 6 TSV, combining VEP IMPACT, ClinVar significance, in-silico predictors (REVEL/CADD/AlphaMissense) and gnomAD allele frequency. Per-component contributions are written out for transparency, and all weights/thresholds are tunable via [`s07_priority_score_config.json`](https://github.com/bryndisy/sarek-processing/blob/main/s07_priority_score_config.json). Pure Python/pandas — no bcftools/conda required.
+
 - Extra helper script (if needed): [`s00_bcftools_include_samples.py`](https://github.com/bryndisy/sarek-processing/blob/main/s00_bcftools_include_samples.py)
 Filters out specific samples, only keeps samples in sample_list.txt and creates new VCF with these. 

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
 
-File Name    : s04_filter_impact.py
+File Name    : s05_filter_impact.py
 Author       : Bryndis Yngvadottir
 Created On   : 30/09/2025
-Last Modified: 01/10/2025, 04/11/2025
+Last Modified: 01/10/2025, 04/11/2025, 23/06/2026
 
 Description: 
 Filter VCF for HIGH and MODERATE impact variants. 
 Uses bcftools from a conda environment (user needs to create this locally, e.g. conda create -n env_bcftools -c bioconda -c conda-forge bcftools).
 
 Usage:
-python s04_filter_impact.py <project> <base_dir> <conda_env> 
+python s05_filter_impact.py <project> <base_dir> <conda_env>
 
 <project>: project name, used in file names and logs
 <base_dir>: path to base directory
@@ -130,6 +130,14 @@ def main():
 
     if not vcfs:
         logging.error("No split_vep VCF files found in input directory.")
+        sys.exit(1)
+
+    if len(vcfs) > 1:
+        logging.error(
+            f"Expected a single split_vep VCF but found {len(vcfs)}: "
+            f"{[v.name for v in vcfs]}. Outputs use fixed names and would be "
+            "overwritten; please run one project/VCF at a time."
+        )
         sys.exit(1)
 
     success_count = fail_count = 0

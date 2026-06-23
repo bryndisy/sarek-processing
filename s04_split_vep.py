@@ -223,7 +223,8 @@ def split_vep_pipeline(in_vcf, out_vcf, conda_env, columns, output_dir, transcri
 def main():
     parser = argparse.ArgumentParser(description="Split VEP annotations in VCFs")
     parser.add_argument("-p", "--project", required=True, help="Project name")
-    parser.add_argument("-i", "--base-dir", required=True, help="Base output directory")
+    parser.add_argument("-b", "--base-dir", "-i", dest="base_dir", required=True,
+                        help="Base output directory (canonical: --base-dir/-b; -i kept for compatibility)")
     parser.add_argument("-e", "--env", required=True, help="Conda environment with bcftools (version 1.10 or higher) installed")
     parser.add_argument("--config", required=True, help="JSON config file with selected VEP fields")
     parser.add_argument(

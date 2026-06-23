@@ -69,7 +69,8 @@ def filter_vcf_bcftools(input_vcf, output_vcf, conda_env):
 def main():
     parser = argparse.ArgumentParser(description="Filter VCF on PASS")
     parser.add_argument("-p", "--project", required=True, help="Project name")
-    parser.add_argument("-o", "--base-dir", required=True, help="Base output directory")
+    parser.add_argument("-b", "--base-dir", "-o", dest="base_dir", required=True,
+                        help="Base output directory (canonical: --base-dir/-b; -o kept for compatibility)")
     parser.add_argument("-e", "--env", default=None, help="Conda environment (optional, needed if bcftools is installed in a conda env)")
     args = parser.parse_args()
 

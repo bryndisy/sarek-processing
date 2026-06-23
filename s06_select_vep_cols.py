@@ -96,7 +96,8 @@ def select_columns(in_vcf, out_tsv, conda_env, config_file):
 def main():
     parser = argparse.ArgumentParser(description="Select VEP columns of interest from a VCF into a TSV")
     parser.add_argument("-p", "--project", required=True, help="Project name")
-    parser.add_argument("-i", "--base-dir", required=True, help="Path to base directory (for file inputs and outputs)")
+    parser.add_argument("-b", "--base-dir", "-i", dest="base_dir", required=True,
+                        help="Base directory for file inputs and outputs (canonical: --base-dir/-b; -i kept for compatibility)")
     parser.add_argument("-e", "--env", default="env_nf", help="Conda environment")
     parser.add_argument("--config", required=True, help="JSON config file with selected VEP columns")
     args = parser.parse_args()

@@ -66,7 +66,8 @@ def filter_impact(in_vcf, out_vcf, conda_env):
 def main():
     parser = argparse.ArgumentParser(description="Filter VCFs on VEP IMPACT (keep MODERATE and HIGH)")
     parser.add_argument("-p", "--project", required=True, help="Project name")
-    parser.add_argument("-i", "--base-dir", required=True, help="Path to base directory (for file inputs and outputs)")
+    parser.add_argument("-b", "--base-dir", "-i", dest="base_dir", required=True,
+                        help="Base directory for file inputs and outputs (canonical: --base-dir/-b; -i kept for compatibility)")
     parser.add_argument("-e", "--env", default="env_nf", help="Conda environment")
     args = parser.parse_args()
 

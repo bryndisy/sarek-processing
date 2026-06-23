@@ -106,7 +106,8 @@ def main():
     parser = argparse.ArgumentParser(description="Generate FASTQ inputfile for sarek")
     parser.add_argument("-p", "--project", required=True, help="Project name")
     parser.add_argument("-f", "--fastq_dir", required=True, help="FASTQ file directory")
-    parser.add_argument("-o", "--base_dir", required=True, help="Base output directory")
+    parser.add_argument("-b", "--base-dir", "-o", "--base_dir", dest="base_dir", required=True,
+                        help="Base output directory (canonical: --base-dir/-b; -o/--base_dir kept for compatibility)")
     args = parser.parse_args()
 
     # Define command line argument as variables

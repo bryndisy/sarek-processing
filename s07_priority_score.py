@@ -254,8 +254,8 @@ def main():
         description="Compute variant priority score and tier from the s06 VEP-columns TSV"
     )
     parser.add_argument("-p", "--project", required=True, help="Project name")
-    parser.add_argument("-i", "--base-dir", required=True,
-                        help="Path to base directory (for file inputs and outputs)")
+    parser.add_argument("-b", "--base-dir", "-i", dest="base_dir", required=True,
+                        help="Base directory for file inputs and outputs (canonical: --base-dir/-b; -i kept for compatibility)")
     parser.add_argument("--config", required=True,
                         help="JSON config file with weights and thresholds")
     args = parser.parse_args()

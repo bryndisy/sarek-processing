@@ -32,6 +32,9 @@ Outputs .tsv with each sample per line with their variant and genotype and selec
 - Step 7: [`s07_priority_score.py`](https://github.com/bryndisy/sarek-processing/blob/main/s07_priority_score.py)
 Computes a 0–100 variant priority score and a discrete tier (1 = highest) from the Step 6 TSV, combining VEP IMPACT, ClinVar significance, in-silico predictors (REVEL/CADD/AlphaMissense) and gnomAD allele frequency. Per-component contributions are written out for transparency, and all weights/thresholds are tunable via [`s07_priority_score_config.json`](https://github.com/bryndisy/sarek-processing/blob/main/s07_priority_score_config.json). Pure Python/pandas (no bcftools) — run it from an environment with `pandas` (e.g. `env_sarek`).
 
+- Step 8: [`s08_extract_genes.py`](https://github.com/bryndisy/sarek-processing/blob/main/s08_extract_genes.py)
+Extracts the variants in a user-supplied set of genes from the Step 7 prioritised table. Genes are given via `--genes` (comma-separated) and/or `--gene-file` (one per line); matching is case-insensitive on the `vep_SYMBOL` column. Writes the subset as `.tsv` and `.xlsx`, preserving the Step 7 priority ordering. Pure Python/pandas.
+
 - Extra helper script (if needed): [`s00_bcftools_include_samples.py`](https://github.com/bryndisy/sarek-processing/blob/main/s00_bcftools_include_samples.py)
 Filters out specific samples, only keeps samples in sample_list.txt and creates new VCF with these. 
 
@@ -210,6 +213,21 @@ conda run -n env_sarek python s07_priority_score.py \
   -p <project> \
   --base-dir <base_dir> \
   --config s07_priority_score_config.json
+```
+
+### Step 8 — extract specific genes
+- **Inputs:** `s7_priority_score.tsv` from Step 7 (found automatically).
+- **Genes:** supply `--genes` (comma-separated) and/or `--gene-file` (one symbol per line; `#` comments and blank lines ignored). Both sources are combined; matching is case-insensitive on `vep_SYMBOL` (override the column with `--gene-column`).
+- **Output:** `s8_gene_extract.tsv` and `s8_gene_extract.xlsx` — same columns and priority ordering as Step 7, restricted to the requested genes. Genes with no matching variants are reported in the log.
+- **Gene names:** matching is against `vep_SYMBOL`, the VEP gene symbol after Step 4's transcript pick (MANE Select > canonical > first), i.e. current HGNC symbols. A gene list using older aliases or Ensembl gene IDs will not match — update the list to current symbols, or point `--gene-column` at an ID column that is present in the table. Genes that match nothing are listed in the log, which is the quickest way to spot a naming mismatch.
+- **Environment:** same as Step 7 — does not take `-e`; run from an environment with `pandas`/`openpyxl` (e.g. `env_sarek`).
+```bash
+conda run -n env_sarek python s08_extract_genes.py \
+  -p <project> \
+  --base-dir <base_dir> \
+  --genes BRCA1,BRCA2,TP53
+# or from a file:
+#   --gene-file /path/to/genes.txt
 ```
 
 ### Optional helper — keep/exclude specific samples (`s00`)

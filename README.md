@@ -1,8 +1,8 @@
 # 🧬 Run nf-core/sarek and process output 
 ## Pipeline description
-This repository contains scripts and configuration files for running the [`nf-core/sarek`](https://nf-co.re/sarek/) pipeline with custom settings for germline whole-exome sequencing (WES) analysis. It also contains further scripts for downstream processing and filtering. 
+This repository contains scripts and configuration files for running the [`nf-core/sarek`](https://nf-co.re/sarek/) pipeline with custom settings for germline whole-exome sequencing (WES) and whole-genome sequencing (WGS) analysis. It also contains further scripts for downstream processing and filtering. 
 
-*Note: At the moment the steps are expected to be run in order and won't work independenlty due to the directory structure. I plan to make them more independent in the future.*
+*Note: At the moment the steps are expected to be run in order and won't work independently due to the directory structure. I plan to make them more independent in the future.*
 
 ---
 
@@ -11,14 +11,14 @@ This repository contains scripts and configuration files for running the [`nf-co
 - Step 1: [`s01_generate_sarek_fastq_input.py`](https://github.com/bryndisy/sarek-processing/blob/main/s01_generate_sarek_fastq_input.py)
 Searches a directory containing FASTQ files and generates the input .csv file required to run the full nf-core/sarek germline pipeline from the FASTQ stage. 
 
-- Step 2a: [`s02_run_sarek_germline.py`](https://github.com/bryndisy/sarek-processing/blob/main/s02_run_sarek_germline.py)
-Runs the full nf-core/sarek pipeline for germline data (from FASTQs to annotated VCFs) for either **WES** or **WGS** data, selected with `--mode {wes,wgs}`, using a JSON configuration file for all paths, VEP plugins, and dbNSFP settings. Mode-specific Nextflow resource settings live in [`wes.config`](https://github.com/bryndisy/sarek-processing/blob/main/wes.config) / [`wgs.config`](https://github.com/bryndisy/sarek-processing/blob/main/wgs.config). For WES, pass the capture-kit target BED via `--intervals` to restrict calling/QC to the exome targets. (Replaces the separate `s02_run_sarek_full_germline.py` and `s02_run_sarek_full_wgs_germline.py` scripts, which are retained for reference.)
+- Step 2a: [`s02a_run_sarek_germline.py`](https://github.com/bryndisy/sarek-processing/blob/main/s02a_run_sarek_germline.py)
+Runs the full nf-core/sarek pipeline for germline data (from FASTQs to annotated VCFs) for either **WES** or **WGS** data, selected with `--mode {wes,wgs}`, using a JSON configuration file for all paths, VEP plugins, and dbNSFP settings. Mode-specific Nextflow resource settings live in [`wes.config`](https://github.com/bryndisy/sarek-processing/blob/main/wes.config) / [`wgs.config`](https://github.com/bryndisy/sarek-processing/blob/main/wgs.config). For WES, pass the capture-kit target BED via `--intervals` to restrict calling/QC to the exome targets. 
 
-- Step 2b: [`s02_run_sarek_annotation.py`](https://github.com/bryndisy/sarek-processing/blob/main/s02_run_sarek_annotation.py)
+- Step 2b: [`s02b_run_sarek_annotation.py`](https://github.com/bryndisy/sarek-processing/blob/main/s02b_run_sarek_annotation.py)
 Runs the nf-core/sarek pipeline from the annotation step using a JSON configuration file for all paths, VEP plugins, and dbNSFP settings.
 
-- Step 3: [`s03_filter_vcf_pass.py`](https://github.com/bryndisy/sarek-processing/blob/main/s03_filter_vcf_pass.py)
-Filters VCFs in a directory to keep only variants with FILTER == PASS
+- Step 3: [`s03_filter_vcf.py`](https://github.com/bryndisy/sarek-processing/blob/main/s03_filter_vcf.py)
+VCF-level filtering in two sub-steps: (1) keep only variants with FILTER == PASS, then (2) mask low-confidence sample genotypes to missing (`./.`) where per-genotype depth or quality falls below threshold (default DP ≥ 10, GQ ≥ 20), using `bcftools +setGT`. Sites are retained; only the failing genotypes are masked.
 
 - Step 4: [`s04_split_vep.py`](https://github.com/bryndisy/sarek-processing/blob/main/s04_split_vep.py)
 Splits up VEP annotations using bcftools +split-vep, it removes the extra CSQ column and filters on canonical transcripts. 
@@ -62,7 +62,7 @@ python s01_generate_sarek_fastq_input.py \
 - **WES:** add `--intervals <targets.bed>` (see *Exome target intervals* below). **WGS:** omit `--mode`-specific extras.
 ```bash
 # WES
-python s02_run_sarek_germline.py \
+python s02a_run_sarek_germline.py \
   -p <project> \
   --samplesheet <base_dir>/<project>/output/sarek_fastq_input_<project>.csv \
   --base-dir <base_dir> \
@@ -72,7 +72,7 @@ python s02_run_sarek_germline.py \
   -e env_nf
 
 # WGS
-python s02_run_sarek_germline.py \
+python s02a_run_sarek_germline.py \
   -p <project> \
   --samplesheet <base_dir>/<project>/output/sarek_fastq_input_<project>.csv \
   --base-dir <base_dir> \
@@ -86,7 +86,7 @@ Use this when you already have called VCFs and only need annotation.
 - **Inputs:** a Sarek annotation samplesheet listing the VCFs to annotate (`--samplesheet`).
 - **Configs:** `s02_vep_settings_plugins_paths.json` (`--config`); resources from `annotation.config` (loaded automatically).
 ```bash
-python s02_run_sarek_annotation.py \
+python s02b_run_sarek_annotation.py \
   -p <project> \
   --samplesheet /path/to/annotation_samplesheet.csv \
   --base-dir <base_dir> \
@@ -94,18 +94,21 @@ python s02_run_sarek_annotation.py \
   -e env_nf
 ```
 
-### Step 3 — filter to PASS variants
+### Step 3 — filter VCF (PASS + genotype DP/GQ mask)
 - **Inputs:** the joint-genotyped VCF under `…/output/sarek_results/annotation/haplotypecaller/joint_variant_calling/` (found automatically).
-- **Config:** none.
+- **Config:** none (genotype thresholds are CLI options).
+- **Options:** `--dp-min` (default 10) and `--gq-min` (default 20). Runs PASS-site filtering, then sets genotypes with DP below `--dp-min` **or** GQ below `--gq-min` to missing (`./.`); sites are kept.
 ```bash
-python s03_filter_vcf_pass.py \
+python s03_filter_vcf.py \
   -p <project> \
   --base-dir <base_dir> \
-  -e env_bcftools
+  -e env_bcftools \
+  --dp-min 10 \
+  --gq-min 20
 ```
 
 ### Step 4 — split VEP annotations and select transcripts
-- **Inputs:** the `*PASS.vcf.gz` from Step 3 (found automatically).
+- **Inputs:** the `*filter_vcf.vcf.gz` from Step 3 (found automatically).
 - **Config:** `s04_split_vep_columns.json` (VEP fields to split out, via `--config`).
 - **Options:** `--transcript-pick {priority,canonical,all}` (default `priority` = MANE Select > canonical > first transcript); `--keep-temp` to retain intermediates.
 ```bash
@@ -164,7 +167,7 @@ python s00_bcftools_include_samples.py \
 
 ## Exome target intervals (`--intervals`)
 
-For WES runs (`s02_run_sarek_germline.py --mode wes`) it is strongly recommended to pass a target BED via `--intervals`, so variant calling and QC are restricted to the captured regions rather than the whole genome (which adds off-target calls, runtime and misleading coverage QC).
+For WES runs (`s02a_run_sarek_germline.py --mode wes`) it is strongly recommended to pass a target BED via `--intervals`, so variant calling and QC are restricted to the captured regions rather than the whole genome (which adds off-target calls, runtime and misleading coverage QC).
 
 **If you don't have the original capture-kit BED** (e.g. old exome data of unknown kit), use a **broad, generic exome BED**. A superset can only *add* regions the old kit didn't capture (those simply return no coverage / no calls — harmless), whereas a too-narrow BED risks *excluding* regions your kit actually captured. Recommended options for GRCh38:
 

@@ -306,21 +306,21 @@ def main():
     logging.info("# Processing files")
 
     # ----------------------------
-    # Collect VCFs 
+    # Collect VCFs
     # ----------------------------
-    # Collect only .PASS VCFs, ignore index files
+    # Collect only the filtered VCFs from s03, ignore index files
     vcfs = [
-        f for f in input_dir.glob("*PASS.vcf*")
+        f for f in input_dir.glob("*filter_vcf.vcf*")
     if not (f.name.endswith(".tbi") or f.name.endswith(".csi"))
     ]
 
     if not vcfs:
-        logging.error("No PASS VCF files found in input directory.")
+        logging.error("No filter_vcf VCF files found in input directory.")
         sys.exit(1)
 
     if len(vcfs) > 1:
         logging.error(
-            f"Expected a single PASS VCF but found {len(vcfs)}: "
+            f"Expected a single filter_vcf VCF but found {len(vcfs)}: "
             f"{[v.name for v in vcfs]}. Outputs use a fixed name and would be "
             "overwritten; please run one project/VCF at a time."
         )
@@ -330,9 +330,9 @@ def main():
     total = len(vcfs)
 
     for in_vcf in vcfs:
-        if in_vcf.name.endswith("PASS.vcf.gz"):
+        if in_vcf.name.endswith("filter_vcf.vcf.gz"):
             out_vcf = output_dir / "s4_split_vep.vcf.gz"
-        elif in_vcf.name.endswith("PASS.vcf"):
+        elif in_vcf.name.endswith("filter_vcf.vcf"):
             out_vcf = output_dir / "s4_split_vep.vcf"
         else:
             logging.warning(f"Skipping unexpected file: {in_vcf}")

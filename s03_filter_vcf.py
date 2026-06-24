@@ -6,18 +6,26 @@ Created On   : 22/09/2025
 Last Modified: 23/06/2026
 
 Description:
-VCF-level filtering, run as two sequential sub-steps:
+VCF-level filtering, run as sequential sub-steps:
   1. Keep only variant sites with FILTER == PASS.
   2. Mask low-confidence sample genotypes to missing (./.) where per-genotype
      read depth (FORMAT/DP) or genotype quality (FORMAT/GQ) falls below threshold,
      using bcftools +setGT.
+  3. Drop sites where, after masking, no sample carries an alt allele (every
+     genotype is 0/0 or ./.). Disable with --keep-no-alt-sites.
 
 Why both here:
 The PASS filter is site-level (is the variant real?). DP/GQ masking is
 genotype-level (is this sample's call at that site well supported?). In a
 multi-sample VCF one sample can be poorly supported while others are fine, so the
-failing genotype is set to missing rather than the whole site being dropped. Sites
-are retained; downstream steps see the masked genotypes.
+failing genotype is set to missing rather than the whole site being dropped.
+
+Why the no-alt drop (sub-step 3):
+Joint genotyping only emits sites that are variant in >=1 sample, but masking can
+strip the only variant call at a site, leaving a row where every sample is 0/0 or
+./.. Such sites carry no variant after QC, so they are removed by default. The test
+is GT-based (GT[*]="alt") because the INFO AC/AN from joint calling are stale once
+genotypes have been masked.
 
 Default thresholds: DP >= 10 and GQ >= 20 (genotypes with DP < dp_min OR
 GQ < gq_min are set to ./.). Adjust with --dp-min / --gq-min.
@@ -27,7 +35,7 @@ conda create -n env_bcftools -c bioconda -c conda-forge bcftools). bcftools is a
 used directly from PATH if no environment is given.
 
 Usage:
-python s03_filter_vcf.py -p <project> -b <base_dir> -e <conda_env> [--dp-min 10] [--gq-min 20]
+python s03_filter_vcf.py -p <project> -b <base_dir> -e <conda_env> [--dp-min 10] [--gq-min 20] [--keep-no-alt-sites]
 
 <project>:   project name, this will become the directory for the output and is used in file names and logs
 <base_dir>:  path to base directory (output paths are created from the project name)
@@ -54,17 +62,22 @@ from utils import run_command, format_runtime, check_conda_env, get_bcftools_ver
 # ----------------------------
 # Filter on PASS, then mask low-confidence genotypes, then index
 # ----------------------------
-def filter_and_mask(input_vcf, output_vcf, conda_env, dp_min, gq_min, tmpdir):
+def filter_and_mask(input_vcf, output_vcf, conda_env, dp_min, gq_min, tmpdir,
+                    drop_no_alt=True):
     """
     1. Keep FILTER == PASS sites.
     2. Set genotypes with FORMAT/DP < dp_min OR FORMAT/GQ < gq_min to missing (./.).
-    3. Index the output if gzipped.
+    3. (default) Drop sites where no sample carries an alt allele after masking.
+    4. Index the output if gzipped.
 
     Returns: (success: bool, temp_files: list[Path])
     """
     prefix = ["conda", "run", "-n", conda_env] if conda_env else []
     tmp_pass = tmpdir / "s3_pass.vcf.gz"
-    temp_files = [tmp_pass, tmpdir]
+    tmp_masked = tmpdir / "s3_masked.vcf.gz"
+    temp_files = [tmp_pass, tmp_masked, tmpdir]
+
+    out_format = "z" if output_vcf.suffix == ".gz" else "v"
 
     # Sub-step 1: keep PASS sites
     cmd_pass = prefix + [
@@ -76,11 +89,14 @@ def filter_and_mask(input_vcf, output_vcf, conda_env, dp_min, gq_min, tmpdir):
 
     # Sub-step 2: mask low-confidence genotypes to missing (./.)
     # Per-genotype OR (single '|') so each sample is judged on its own DP/GQ.
+    # If we will drop no-alt sites next, mask into a temp file; otherwise straight
+    # to the final output.
     expr = f"FMT/DP<{dp_min} | FMT/GQ<{gq_min}"
-    out_format = "z" if output_vcf.suffix == ".gz" else "v"
+    mask_out = tmp_masked if drop_no_alt else output_vcf
     cmd_mask = prefix + [
         "bcftools", "+setGT", str(tmp_pass),
-        "--output-type", out_format, "--output", str(output_vcf),
+        "--output-type", "z" if drop_no_alt else out_format,
+        "--output", str(mask_out),
         "--",                       # separates bcftools options from plugin options
         "-t", "q",                  # target genotypes matching the include expression
         "-n", ".",                  # set them to missing (./.)
@@ -89,7 +105,19 @@ def filter_and_mask(input_vcf, output_vcf, conda_env, dp_min, gq_min, tmpdir):
     if not run_command(cmd_mask):
         return False, temp_files
 
-    # Sub-step 3: index gzipped output
+    # Sub-step 3 (optional): drop sites with no alt-carrying genotype left.
+    # Masking can strip the only variant call at a site, leaving a row where every
+    # sample is 0/0 or ./.. GT-based test reflects the masked genotypes (the INFO
+    # AC/AN from joint calling are stale after masking).
+    if drop_no_alt:
+        cmd_drop = prefix + [
+            "bcftools", "view", "-i", 'GT[*]="alt"', str(tmp_masked),
+            "--output-type", out_format, "--output", str(output_vcf),
+        ]
+        if not run_command(cmd_drop):
+            return False, temp_files
+
+    # Sub-step 4: index gzipped output
     if output_vcf.suffix == ".gz":
         cmd_index = prefix + ["bcftools", "index", "-t", str(output_vcf)]
         if not run_command(cmd_index):
@@ -110,6 +138,9 @@ def main():
                         help="Conda environment with bcftools (optional; PATH bcftools used if omitted)")
     parser.add_argument("--dp-min", type=int, default=10, help="Minimum FORMAT/DP to keep a genotype (default: 10)")
     parser.add_argument("--gq-min", type=int, default=20, help="Minimum FORMAT/GQ to keep a genotype (default: 20)")
+    parser.add_argument("--keep-no-alt-sites", action="store_true",
+                        help="Keep sites that have no alt-carrying genotype after masking "
+                             "(by default such sites, e.g. all 0/0 or ./., are dropped)")
     args = parser.parse_args()
 
     # Define command line argument as variables
@@ -163,6 +194,7 @@ def main():
     logging.info(f"Input directory: {input_dir}")
     logging.info(f"Output directory: {output_dir}")
     logging.info(f"Genotype thresholds: DP >= {args.dp_min}, GQ >= {args.gq_min} (failing genotypes set to ./.)")
+    logging.info(f"Drop sites with no alt-carrying genotype after masking: {not args.keep_no_alt_sites}")
     logging.info("# Processing files")
 
     # ----------------------------
@@ -200,7 +232,8 @@ def main():
             continue
 
         success, temp_files = filter_and_mask(
-            input_vcf, output_vcf, conda_env, args.dp_min, args.gq_min, tmpdir
+            input_vcf, output_vcf, conda_env, args.dp_min, args.gq_min, tmpdir,
+            drop_no_alt=not args.keep_no_alt_sites,
         )
         if success:
             logging.info(f"Processed: {input_vcf.name} -> {output_vcf.name}")

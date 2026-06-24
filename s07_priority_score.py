@@ -27,7 +27,10 @@ numeric score ranks finely within them.
 All weights and thresholds live in the accompanying config file
 (s07_priority_score_config.json) so the scheme can be tuned without editing code.
 
-This step is pure Python/pandas and does NOT require bcftools or a conda env.
+This step is pure Python/pandas and does NOT use bcftools or `conda run`. It does
+need pandas, so run it from an environment that has pandas installed (e.g. the
+pipeline's env_sarek): either activate the env first, or invoke it via
+`conda run -n env_sarek python s07_priority_score.py ...`.
 
 Usage:
 python s07_priority_score.py -p <project> -i <base_dir> --config <config_file>
@@ -38,9 +41,10 @@ python s07_priority_score.py -p <project> -i <base_dir> --config <config_file>
 
 Input : <base_dir>/<project>/output/s6_select_vep_cols.tsv
 Output: <base_dir>/<project>/output/s7_priority_score.tsv
+        <base_dir>/<project>/output/s7_priority_score.xlsx
 
 Dependencies:
-pandas
+pandas, openpyxl (for the .xlsx output)
 
 """
 
@@ -333,6 +337,24 @@ def main():
 
     out_tsv = output_dir / "s7_priority_score.tsv"
     scored.to_csv(out_tsv, sep="\t", index=False)
+    logging.info(f"# Wrote {len(scored)} scored rows -> {out_tsv.name}")
+
+    # Also write an Excel workbook (a convenient final deliverable). Needs the
+    # openpyxl engine; if it is missing, keep the TSV and warn rather than fail.
+    out_xlsx = output_dir / "s7_priority_score.xlsx"
+    try:
+        with pd.ExcelWriter(out_xlsx, engine="openpyxl") as writer:
+            scored.to_excel(writer, sheet_name="priority_score", index=False)
+            # Freeze the header row so it stays visible while scrolling.
+            writer.sheets["priority_score"].freeze_panes = "A2"
+        logging.info(f"# Wrote Excel workbook -> {out_xlsx.name}")
+    except ImportError:
+        out_xlsx = None
+        logging.error(
+            "Could not write Excel output: the 'openpyxl' engine is not installed. "
+            "Install it (e.g. conda install -n env_sarek -c conda-forge openpyxl) and "
+            "re-run. The TSV output was still written."
+        )
 
     # Quick tier breakdown for the log.
     tier_counts = scored["priority_tier"].value_counts().sort_index()
@@ -340,11 +362,12 @@ def main():
         logging.info(f"Tier {tier}: {count} rows")
 
     duration = time.time() - start_time
-    logging.info(f"# Wrote {len(scored)} scored rows -> {out_tsv.name}")
     logging.info(f"# Runtime: {format_runtime(duration)}")
     logging.info("# --- End of run ---")
 
-    print(f"Priority scoring complete. Output: {out_tsv}")
+    print(f"Priority scoring complete. TSV: {out_tsv}")
+    if out_xlsx is not None:
+        print(f"                          Excel: {out_xlsx}")
     print(f"Log written to {log_file}")
 
 

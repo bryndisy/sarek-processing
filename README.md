@@ -18,7 +18,7 @@ Runs the full nf-core/sarek pipeline for germline data (from FASTQs to annotated
 Runs the nf-core/sarek pipeline from the annotation step using a JSON configuration file for all paths, VEP plugins, and dbNSFP settings.
 
 - Step 3: [`s03_filter_vcf.py`](https://github.com/bryndisy/sarek-processing/blob/main/s03_filter_vcf.py)
-VCF-level filtering in two sub-steps: (1) keep only variants with FILTER == PASS, then (2) mask low-confidence sample genotypes to missing (`./.`) where per-genotype depth or quality falls below threshold (default DP ≥ 10, GQ ≥ 20), using `bcftools +setGT`. Sites are retained; only the failing genotypes are masked.
+VCF-level filtering in sub-steps: (1) keep only variants with FILTER == PASS; (2) mask low-confidence sample genotypes to missing (`./.`) where per-genotype depth or quality falls below threshold (default DP ≥ 10, GQ ≥ 20), using `bcftools +setGT`; (3) drop sites where, after masking, no sample carries an alt allele (all `0/0` or `./.`) — disable with `--keep-no-alt-sites`. Otherwise sites are retained and only failing genotypes are masked.
 
 - Step 4: [`s04_split_vep.py`](https://github.com/bryndisy/sarek-processing/blob/main/s04_split_vep.py)
 Splits up VEP annotations using bcftools +split-vep, it removes the extra CSQ column and filters on canonical transcripts. 
@@ -30,18 +30,77 @@ Splits filters VCF for HIGH and MODERATE impact variants.
 Outputs .tsv with each sample per line with their variant and genotype and selected VEP columns of interest from the annotated VCF. 
 
 - Step 7: [`s07_priority_score.py`](https://github.com/bryndisy/sarek-processing/blob/main/s07_priority_score.py)
-Computes a 0–100 variant priority score and a discrete tier (1 = highest) from the Step 6 TSV, combining VEP IMPACT, ClinVar significance, in-silico predictors (REVEL/CADD/AlphaMissense) and gnomAD allele frequency. Per-component contributions are written out for transparency, and all weights/thresholds are tunable via [`s07_priority_score_config.json`](https://github.com/bryndisy/sarek-processing/blob/main/s07_priority_score_config.json). Pure Python/pandas — no bcftools/conda required.
+Computes a 0–100 variant priority score and a discrete tier (1 = highest) from the Step 6 TSV, combining VEP IMPACT, ClinVar significance, in-silico predictors (REVEL/CADD/AlphaMissense) and gnomAD allele frequency. Per-component contributions are written out for transparency, and all weights/thresholds are tunable via [`s07_priority_score_config.json`](https://github.com/bryndisy/sarek-processing/blob/main/s07_priority_score_config.json). Pure Python/pandas (no bcftools) — run it from an environment with `pandas` (e.g. `env_sarek`).
 
 - Extra helper script (if needed): [`s00_bcftools_include_samples.py`](https://github.com/bryndisy/sarek-processing/blob/main/s00_bcftools_include_samples.py)
 Filters out specific samples, only keeps samples in sample_list.txt and creates new VCF with these. 
 
 ---
 
+## What nf-core/sarek does (Step 2)
+
+[nf-core/sarek](https://nf-co.re/sarek/) is a Nextflow workflow that takes raw sequencing reads through to annotated variant calls. Steps 2a/2b drive it with germline settings (`--genome GATK.GRCh38`, `--joint_germline true`, `--tools haplotypecaller,vep`), and all the heavy tools run inside Singularity containers — nothing besides Nextflow needs to be installed locally.
+
+With these settings, Sarek runs the following stages:
+
+1. **Preprocessing (`--step mapping`)**
+   - **Alignment** of reads to the reference with **BWA-MEM** (`--aligner bwa-mem`).
+   - **Mark duplicates** (GATK MarkDuplicates) to flag PCR/optical duplicate reads.
+   - **Base Quality Score Recalibration** (GATK BQSR) to correct systematic basecalling error.
+   - Produces analysis-ready, recalibrated **CRAM/BAM** files.
+2. **Germline variant calling**
+   - **GATK HaplotypeCaller** per sample, emitting a **GVCF**.
+   - **Joint genotyping** across all samples (GenomicsDBImport → GenotypeGVCFs) into a single **multi-sample VCF**.
+   - **Filtering**: variant recalibration (VQSR) / hard filtering, which stamps the `FILTER` column (`PASS` vs. filtered). *This is the `FILTER` field that Step 3 keys on.*
+3. **Annotation**
+   - **Ensembl VEP** annotates every variant with consequence, IMPACT, gene/transcript, MANE/canonical flags, ClinVar, gnomAD frequencies, and the in-silico predictors configured via the plugins/dbNSFP fields in `s02_vep_settings_plugins_paths.json` (REVEL, CADD, AlphaMissense, etc.). Annotations are packed into the `CSQ` INFO field — this is what Step 4 splits out.
+4. **Quality control**
+   - Per-sample and per-run QC (FastQC, samtools/mosdepth coverage, variant-calling metrics) aggregated into a **MultiQC** report.
+
+For **WES**, `--intervals <targets.bed>` restricts calling and coverage QC to the capture-kit regions (see *Exome target intervals* below). **Step 2b** skips stages 1–2 and runs only stage 3 (annotation) when you already have called VCFs.
+
+### Sarek output
+
+Everything is written under `<base_dir>/<project>/output/sarek_results/`:
+
+| Path | Contents |
+|------|----------|
+| `preprocessing/` | Recalibrated, duplicate-marked CRAM/BAM files and their indexes. |
+| `variant_calling/haplotypecaller/` | Per-sample GVCFs and the joint-genotyped, recalibrated VCF (pre-annotation). |
+| `annotation/haplotypecaller/joint_variant_calling/` | **The annotated, joint-called multi-sample VCF** (`*.vcf.gz` + `.tbi`). **This is the file Step 3 picks up** to begin downstream processing. |
+| `reports/` | Per-tool QC outputs (FastQC, mosdepth/coverage, samtools stats, bcftools stats, etc.). |
+| `multiqc/` | Aggregated `multiqc_report.html` summarising QC across all samples. |
+| `pipeline_info/` | Nextflow execution reports, timeline, software versions, and the run trace. |
+
+> The annotated VCF in `annotation/.../joint_variant_calling/` is the single hand-off point between Sarek and the downstream steps — Step 3 globs that directory for `*.vcf.gz`.
+
+---
+
+## Requirements and environment
+
+The whole pipeline runs from a **single conda environment**. It needs only:
+
+- **Nextflow** — launches nf-core/sarek in Step 2 (the actual aligners/callers/VEP run inside Sarek's Singularity containers, so they are *not* installed here).
+- **bcftools** (≥ 1.11, for the `+split-vep` and `+setGT` plugins) — used by Steps 3–6.
+- **pandas** and **openpyxl** (with Python) — used by the Step 7 priority-scoring step (openpyxl writes the `.xlsx` output).
+
+Create it once with:
+
+```bash
+conda create -n env_sarek -c conda-forge -c bioconda nextflow "bcftools>=1.11" pandas openpyxl python
+```
+
+Then `conda activate env_sarek` (or pass `-e env_sarek` to the steps that take it). The examples below use `env_sarek`.
+
+> **Why one environment?** Nextflow, bcftools and pandas have no conflicting dependencies, and Sarek's own tools live in containers, so a single env keeps things simple — one name to activate and to pass to every `-e` flag. You can split it into separate envs (e.g. one for Nextflow, one for bcftools/pandas) if you prefer strict isolation, but it is not required.
+>
+> **Note:** Nextflow/Sarek also needs a container engine (**Singularity/Apptainer**) and Java available on the system. Singularity is usually provided as a system module rather than via conda; Java is pulled in by the Nextflow conda package.
+
 ## How to run each step
 
 The steps share a common directory layout: outputs go to `<base_dir>/<project>/output/`, with logs in `<base_dir>/<project>/output/logs/`. From Step 3 onward this `output/` directory is both the input and output location, and each step finds its input by globbing for the previous step's output, so the steps are expected to be run **in order**.
 
-Two conda environments are assumed in the examples below: `env_nf` (with Nextflow) for Step 2, and `env_bcftools` (with bcftools ≥ 1.10) for the bcftools steps. Use whatever names exist on your system.
+The examples below assume the single `env_sarek` environment described above (pass its name to `-e`). If you keep separate environments instead, substitute the appropriate name in each command.
 
 > **Flags are consistent across all steps:** the base directory is always `--base-dir` (short `-b`), and the Step 2 input samplesheet is `--samplesheet` (short `-s`). The older short flags still work for backward compatibility — `-o` (Steps 1–3) and `-i` (Steps 4–7) are retained as aliases for `--base-dir`, and `-i/--input` is retained for `--samplesheet` — but the commands below use the canonical flags and are recommended.
 
@@ -69,7 +128,7 @@ python s02a_run_sarek_germline.py \
   --config s02_vep_settings_plugins_paths.json \
   --mode wes \
   --intervals /path/to/exome_targets.bed \
-  -e env_nf
+  -e env_sarek
 
 # WGS
 python s02a_run_sarek_germline.py \
@@ -78,7 +137,7 @@ python s02a_run_sarek_germline.py \
   --base-dir <base_dir> \
   --config s02_vep_settings_plugins_paths.json \
   --mode wgs \
-  -e env_nf
+  -e env_sarek
 ```
 
 ### Step 2b — run Sarek from the annotation step only
@@ -91,18 +150,18 @@ python s02b_run_sarek_annotation.py \
   --samplesheet /path/to/annotation_samplesheet.csv \
   --base-dir <base_dir> \
   --config s02_vep_settings_plugins_paths.json \
-  -e env_nf
+  -e env_sarek
 ```
 
 ### Step 3 — filter VCF (PASS + genotype DP/GQ mask)
 - **Inputs:** the joint-genotyped VCF under `…/output/sarek_results/annotation/haplotypecaller/joint_variant_calling/` (found automatically).
 - **Config:** none (genotype thresholds are CLI options).
-- **Options:** `--dp-min` (default 10) and `--gq-min` (default 20). Runs PASS-site filtering, then sets genotypes with DP below `--dp-min` **or** GQ below `--gq-min` to missing (`./.`); sites are kept.
+- **Options:** `--dp-min` (default 10) and `--gq-min` (default 20) set the genotype masking thresholds; `--keep-no-alt-sites` keeps sites that have no alt-carrying genotype left after masking (by default they are dropped). Runs PASS-site filtering, then sets genotypes with DP below `--dp-min` **or** GQ below `--gq-min` to missing (`./.`), then removes sites where masking left no sample carrying the variant.
 ```bash
 python s03_filter_vcf.py \
   -p <project> \
   --base-dir <base_dir> \
-  -e env_bcftools \
+  -e env_sarek \
   --dp-min 10 \
   --gq-min 20
 ```
@@ -115,7 +174,7 @@ python s03_filter_vcf.py \
 python s04_split_vep.py \
   -p <project> \
   --base-dir <base_dir> \
-  -e env_bcftools \
+  -e env_sarek \
   --config s04_split_vep_columns.json \
   --transcript-pick priority
 ```
@@ -127,7 +186,7 @@ python s04_split_vep.py \
 python s05_filter_impact.py \
   -p <project> \
   --base-dir <base_dir> \
-  -e env_bcftools
+  -e env_sarek
 ```
 
 ### Step 6 — select VEP columns to a TSV
@@ -137,16 +196,17 @@ python s05_filter_impact.py \
 python s06_select_vep_cols.py \
   -p <project> \
   --base-dir <base_dir> \
-  -e env_bcftools \
+  -e env_sarek \
   --config s06_select_vep_columns.json
 ```
 
 ### Step 7 — compute priority score and tier
 - **Inputs:** `s6_select_vep_cols.tsv` from Step 6 (found automatically).
 - **Config:** `s07_priority_score_config.json` (weights/thresholds, via `--config`).
-- No conda env required (pure Python/pandas; needs `pandas` installed).
+- **Output:** `s7_priority_score.tsv` **and** `s7_priority_score.xlsx` (same content; the Excel file has the header row frozen). The `.xlsx` needs `openpyxl` — if it is missing the step still writes the TSV and warns.
+- **Environment:** does not take `-e`/`conda run`; it `import`s pandas directly, so run it from an environment that has `pandas` and `openpyxl` (e.g. `env_sarek`). Either `conda activate env_sarek` first, or invoke via `conda run -n env_sarek python …` as shown.
 ```bash
-python s07_priority_score.py \
+conda run -n env_sarek python s07_priority_score.py \
   -p <project> \
   --base-dir <base_dir> \
   --config s07_priority_score_config.json
@@ -160,8 +220,49 @@ python s00_bcftools_include_samples.py \
   /path/to/input.vcf.gz \
   /path/to/sample_list.txt \
   <base_dir>/<project>/output \
-  env_bcftools
+  env_sarek
 ```
+
+---
+
+## Priority score and tiers (Step 7)
+
+Step 7 ranks variants two complementary ways: a continuous **priority score** (0–100, fine ranking) and a discrete **priority tier** (1–4, coarse bucket). Everything below is configurable in [`s07_priority_score_config.json`](https://github.com/bryndisy/sarek-processing/blob/main/s07_priority_score_config.json) — the numbers quoted are the shipped defaults.
+
+### Priority score (0–100)
+
+The score is the sum of four weighted components. Each component is normalised to 0–1, then multiplied by its weight; the weights sum to 100, so a variant maxing out every component scores 100. The four per-component contributions are written to the output TSV (`priority_impact`, `priority_clinvar`, `priority_insilico`, `priority_rarity`) alongside the total (`priority_score`) so every score is auditable.
+
+| Component | Weight | What it measures | Normalised value (0–1) |
+|-----------|-------:|------------------|------------------------|
+| **IMPACT** | 30 | VEP consequence severity | HIGH = 1.0, MODERATE = 0.6, LOW = 0.15, MODIFIER = 0.0 |
+| **ClinVar** | 30 | Clinical significance (CLNSIG) | Pathogenic = 1.0, Likely_pathogenic = 0.8, Conflicting = 0.4, Uncertain = 0.3, Benign/Likely_benign = 0.0 |
+| **In-silico** | 25 | Pathogenicity predictors | Mean of available predictors: REVEL (0–1), CADD_PHRED (capped at 40 → 1.0), AlphaMissense score (0–1) |
+| **Rarity** | 15 | Population allele frequency | novel = 1.0, ≤0.0001 = 0.9, ≤0.001 = 0.6, ≤0.01 = 0.3, common = 0.0 |
+
+Notes:
+- **In-silico** averages only the predictors that are present, so a variant isn't penalised for missing scores; if none are present the component is 0.
+- **Rarity** uses gnomAD POPMAX AF (`gnomAD4.1_joint_POPMAX_AF`), falling back to VEP `MAX_AF`. A **missing AF is treated as novel** (highest rarity), on the assumption that absence from gnomAD means rare rather than unmeasured.
+- The score **ranks** variants; it is not a probability of pathogenicity.
+
+### Priority tier (1 = highest, 4 = lowest)
+
+The tier is a coarse, rule-based bucket evaluated top-down (first matching rule wins). It combines ClinVar, IMPACT and allele frequency, and is meant for quick filtering; the numeric score ranks finely *within* a tier. Output column: `priority_tier`.
+
+| Tier | Assigned when (defaults) |
+|------|--------------------------|
+| **1** | ClinVar Pathogenic/Likely_pathogenic, **or** HIGH impact and rare (AF ≤ 0.001). |
+| **2** | Predicted damaging (REVEL ≥ 0.7, **or** CADD ≥ 20, **or** AlphaMissense = likely_pathogenic, **or** HIGH impact) and not common (AF ≤ 0.01). |
+| **3** | HIGH or MODERATE impact and not common (AF ≤ 0.05). |
+| **4** | Everything else. |
+
+A **ClinVar Benign/Likely_benign call overrides everything and demotes the variant to tier 4**, even if it is HIGH impact or rare (`benign_demote: true`).
+
+The output (written as both `s7_priority_score.tsv` and `s7_priority_score.xlsx`) is sorted by tier ascending, then score descending, so the highest-priority variants are at the top.
+
+### Tuning
+
+To change the scheme, edit `s07_priority_score_config.json` and re-run **Step 7 only** (it reads the existing `s6_select_vep_cols.tsv`, so no bcftools re-run is needed). Common adjustments: change the `weights` to re-balance components, edit `rarity_bins` thresholds, raise/lower the `tiers` cut-offs (e.g. `tier2_revel_min`), or set `benign_demote` to `false` to stop ClinVar-benign overriding everything.
 
 ---
 

@@ -13,7 +13,9 @@ produced by s06_select_vep_cols.py.
 The score is a continuous 0-100 value built from four weighted components:
   1. IMPACT      - VEP consequence severity (HIGH/MODERATE/LOW/MODIFIER)
   2. ClinVar     - clinical significance (pathogenic ... benign)
-  3. In silico   - pathogenicity predictors (REVEL, CADD_PHRED, AlphaMissense)
+  3. In silico   - pathogenicity predictors (REVEL, CADD_PHRED, AlphaMissense,
+                   MetaRNN, ClinPred), lifted by the strongest SpliceAI delta
+                   score so splice variants the missense predictors miss still score
   4. Rarity      - population allele frequency (gnomAD POPMAX, MAX_AF fallback)
 
 Each component is normalised to 0-1, multiplied by its weight (weights sum to
@@ -21,8 +23,11 @@ the max score), and the four contributions are summed. The per-component
 contributions are written out alongside the total so the score is auditable.
 
 A discrete tier (1 = highest priority, 4 = lowest) is also derived, combining
-ClinVar status, IMPACT and allele frequency. Tiers are coarse filters; the
-numeric score ranks finely within them.
+ClinVar status, IMPACT, allele frequency and additional signals: strong SpliceAI
+(splice) and BayesDel (damaging) promote a variant, while a LOFTEE low-confidence
+(LC) HIGH-impact call is demoted out of the top tiers. All of these new signals
+degrade gracefully - if a field is absent (e.g. LOFTEE did not run), it simply
+has no effect. Tiers are coarse filters; the numeric score ranks finely within them.
 
 All weights and thresholds live in the accompanying config file
 (s07_priority_score_config.json) so the scheme can be tuned without editing code.
@@ -136,8 +141,25 @@ def score_clinvar(clnsig, cfg):
     return cfg["clinvar_scores"].get(category, 0.0)
 
 
+def _best_spliceai(row, cfg):
+    """Strongest SpliceAI delta score (0-1) across the configured DS fields, or 0."""
+    best = 0.0
+    for f in cfg.get("insilico", {}).get("splice_fields", []):
+        v = parse_float(row.get(f))
+        if v is not None:
+            best = max(best, min(max(v, 0.0), 1.0))
+    return best
+
+
 def score_insilico(row, cfg):
-    """Mean of the available, normalised in-silico predictors (0-1)."""
+    """In-silico component (0-1).
+
+    Mean of the available, normalised missense predictors, lifted by the strongest
+    SpliceAI delta score via max() so a splice-affecting variant (which the
+    missense predictors typically miss) still scores, without diluting a strong
+    missense signal. Missing predictors are simply skipped; if none are present
+    the component is 0 (or the SpliceAI value, if any).
+    """
     components = cfg["insilico"]["components"]
     cadd_cap = cfg["insilico"]["cadd_phred_cap"]
     values = []
@@ -147,12 +169,12 @@ def score_insilico(row, cfg):
             continue
         if field == "vep_CADD_PHRED":
             norm = min(raw / cadd_cap, 1.0)
-        else:  # REVEL / AlphaMissense already 0-1
+        else:  # REVEL / AlphaMissense / MetaRNN / ClinPred already 0-1
             norm = min(max(raw, 0.0), 1.0)
         values.append(weight * norm)
-    if not values:
-        return 0.0
-    return sum(values) / len(values)
+    mean_missense = sum(values) / len(values) if values else 0.0
+
+    return max(mean_missense, _best_spliceai(row, cfg))
 
 
 def get_af(row, cfg):
@@ -186,15 +208,33 @@ def assign_tier(row, cfg):
     revel = parse_float(row.get("vep_REVEL"))
     cadd = parse_float(row.get("vep_CADD_PHRED"))
     am_pred = str(row.get("vep_AlphaMissense_pred", "")).strip().lower()
+    bayesdel_pred = str(row.get("vep_BayesDel_addAF_pred", "")).strip().upper()
+    spliceai = _best_spliceai(row, cfg)
+
+    # LOFTEE confidence: a HIGH-impact call flagged low-confidence (LC) by LOFTEE
+    # is not a trustworthy LoF, so it should not earn the HIGH-impact boost into
+    # Tiers 1-2. It still reaches Tier 3 (which uses the raw impact) for review.
+    # If LOFTEE did not run, vep_LoF is empty and nothing is demoted.
+    lof = str(row.get("vep_LoF", "")).strip().upper()
+    high_impact = ("HIGH" in impact)
+    if t.get("loftee_lc_demote", True) and lof == "LC":
+        high_impact = False
+
+    # Sentinel thresholds so a missing config key simply disables that rule.
+    tier1_splice = t.get("tier1_spliceai_min", 1.1)
+    tier2_splice = t.get("tier2_spliceai_min", 1.1)
+    bayesdel_hit = t.get("tier2_bayesdel_pred")
 
     # Benign ClinVar overrides everything -> lowest priority.
     if t.get("benign_demote", True) and clinvar in {"benign", "likely_benign"}:
         return 4
 
-    # Tier 1: clinically pathogenic, or HIGH impact and rare.
+    # Tier 1: clinically pathogenic; HIGH impact and rare; or strong splice and rare.
     if clinvar in {"pathogenic", "likely_pathogenic"}:
         return 1
-    if "HIGH" in impact and af_val <= t["tier1_high_impact_max_af"]:
+    if high_impact and af_val <= t["tier1_high_impact_max_af"]:
+        return 1
+    if spliceai >= tier1_splice and af_val <= t["tier1_high_impact_max_af"]:
         return 1
 
     # Tier 2: predicted-damaging (or HIGH impact) and not common.
@@ -202,12 +242,15 @@ def assign_tier(row, cfg):
         (revel is not None and revel >= t["tier2_revel_min"])
         or (cadd is not None and cadd >= t["tier2_cadd_min"])
         or (am_pred == t["tier2_alphamissense_pred"])
-        or ("HIGH" in impact)
+        or (bool(bayesdel_hit) and bayesdel_pred == str(bayesdel_hit).upper())
+        or (spliceai >= tier2_splice)
+        or high_impact
     )
     if damaging and af_val <= t["tier2_max_af"]:
         return 2
 
-    # Tier 3: moderate/high impact, not common.
+    # Tier 3: moderate/high impact, not common. Uses the raw impact so an LC LoF
+    # demoted from Tiers 1-2 is still surfaced here rather than dropped to Tier 4.
     if ("HIGH" in impact or "MODERATE" in impact) and af_val <= t["tier3_max_af"]:
         return 3
 

@@ -5,25 +5,42 @@ Author       : Bryndis Yngvadottir
 Created On   : 04/11/2025
 Last Modified: 
 
-Description: 
-Run nf-core/sarek pipeline from annotation step using a JSON configuration file (s02_vep_settings_plugins_paths.json) for all paths, VEP plugins, and dbNSFP settings.
+Description:
+Normalize and then annotate a joint-called VCF with nf-core/sarek's annotation
+step, using a JSON configuration file (s02_vep_settings_plugins_paths.json) for all
+paths, VEP plugins, and dbNSFP settings.
+
+Before annotation, every VCF listed in the input samplesheet is normalized with
+  bcftools norm -m -any -f <fasta>
+which splits multiallelic records to biallelic AND left-aligns/trims indels. This
+is REQUIRED for correct annotation: VEP/dbNSFP/gnomAD match on exact
+CHROM:POS:REF:ALT and gnomAD stores left-aligned, biallelic records, so annotating
+an un-normalized joint VCF makes multiallelic sites and non-left-aligned indels
+look "novel" (absent from gnomAD) when they are not. Sarek does NOT normalize on
+its own, so this step does it explicitly on every run. The normalized copies are
+written under <base_dir>/<project>/output/normalized_vcfs/ and a rewritten
+samplesheet pointing at them is passed to Sarek.
+
+This is the annotation half of the germline workflow:  s02a (call) -> s02b
+(normalize + annotate). s02a runs calling only and produces the joint VCF that
+feeds this step.
 
 Usage:
-python s02_run_sarek_annotation.py \
+python s02b_run_sarek_annotation.py \
   -p <project> \
   -i <input_file> \
   -o <base_dir> \
   -e <conda_env> \
-  --config <config_file> 
+  --config <config_file>
 
 <project>: project name, this will become the directory for the output and is used in file names and logs
 <input_file>: path to the sarek annotation samplesheet (VCFs to annotate)
 <base_dir>: path to base directory (subdirectories will be created based on project name etc)
 <config_file>: .json configuration file with reference databases, vep plugins etc
-<conda_env>: name of conda environment with nextflow installed (optional)
+<conda_env>: name of conda environment with nextflow AND bcftools installed (optional)
 
-Dependencies: 
-conda, nextflow
+Dependencies:
+conda, nextflow, bcftools
 
 Notes to user:
 # Configuration file: 
@@ -34,6 +51,7 @@ Notes to user:
 
 import sys
 import os
+import csv
 import time
 from datetime import datetime
 from pathlib import Path
@@ -45,20 +63,129 @@ import logging
 from utils import format_runtime, check_conda_env, run_command
 
 # ----------------------------
-# Helpers: Build commands and arguments 
+# Helpers: Normalization
 # ----------------------------
 
-def build_vep_custom_args(plugins: dict) -> str:
+def normalize_vcf(env_name, fasta: str, src: Path, dst: Path) -> bool:
+    """Normalize a single VCF (split multiallelics + left-align/trim) and index it.
+
+    bcftools norm -m -any -f <fasta> is required before annotation so that records
+    match gnomAD's left-aligned, biallelic representation.
+    """
+    prefix = ["conda", "run", "-n", env_name] if env_name else []
+    norm = prefix + [
+        "bcftools", "norm", "-m", "-any", "-f", str(fasta),
+        "--output-type", "z", "--output", str(dst), str(src),
+    ]
+    if not run_command(norm):
+        return False
+    return run_command(prefix + ["bcftools", "index", "-t", str(dst)])
+
+
+def _is_vcf_path(val: str) -> bool:
+    return isinstance(val, str) and (val.endswith(".vcf.gz") or val.endswith(".vcf"))
+
+
+def normalize_samplesheet(env_name, fasta: str, input_file: Path,
+                          norm_dir: Path, out_samplesheet: Path) -> bool:
+    """Normalize every VCF referenced in the annotate samplesheet and write a new
+    samplesheet pointing at the normalized copies. Returns True on success.
+
+    Any column whose value looks like a VCF path (.vcf/.vcf.gz) is treated as a
+    VCF and rewritten, so this is robust to sarek samplesheet column naming.
+    """
+    with open(input_file, newline="") as fh:
+        reader = csv.DictReader(fh)
+        fieldnames = reader.fieldnames
+        rows = list(reader)
+
+    if not fieldnames:
+        logging.error(f"Samplesheet has no header row: {input_file}")
+        return False
+
+    norm_dir.mkdir(parents=True, exist_ok=True)
+    cache: dict[str, str] = {}  # resolved source VCF -> normalized VCF
+
+    for row in rows:
+        for col in fieldnames:
+            val = (row.get(col) or "").strip()
+            if not _is_vcf_path(val):
+                continue
+            src = Path(val)
+            if not src.is_absolute():
+                src = (input_file.parent / src).resolve()
+            if not src.is_file():
+                logging.error(f"VCF referenced in samplesheet not found: {src}")
+                return False
+            if str(src) not in cache:
+                base = src.name
+                for ext in (".vcf.gz", ".vcf"):
+                    if base.endswith(ext):
+                        base = base[: -len(ext)]
+                        break
+                dst = (norm_dir / f"{base}.norm.vcf.gz").resolve()
+                logging.info(f"Normalizing (bcftools norm -m -any) {src} -> {dst}")
+                if not normalize_vcf(env_name, fasta, src, dst):
+                    logging.error(f"Normalization failed for {src}")
+                    return False
+                cache[str(src)] = str(dst)
+            row[col] = cache[str(src)]
+
+    if not cache:
+        logging.error(f"No VCF paths found in samplesheet columns: {input_file}")
+        return False
+
+    with open(out_samplesheet, "w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    logging.info(
+        f"Wrote normalized samplesheet -> {out_samplesheet} "
+        f"({len(cache)} VCF(s) normalized)"
+    )
+    return True
+
+
+# ----------------------------
+# Helpers: Build commands and arguments
+# ----------------------------
+
+def build_vep_custom_args(plugins: dict, dir_plugins=None) -> str:
+    """Build VEP's --vep_custom_args from the vep_plugins config.
+
+    Each entry maps a plugin name to its argument(s):
+      - string                -> --plugin NAME,arg            (e.g. REVEL, Mastermind)
+      - list/tuple of strings -> --plugin NAME,arg1,arg2,...  (e.g. CADD snv+indel,
+                                   or key:value / key=value args for LoF, SpliceAI)
+      - null / "" / []        -> --plugin NAME                (no-argument plugins,
+                                   e.g. NMD)
+
+    dir_plugins (optional, from the config key "vep_dir_plugins") sets VEP's
+    --dir_plugins, i.e. the directories VEP searches for plugin *modules* (.pm
+    files) such as LOFTEE's LoF.pm, which is not in the container's bundled
+    plugins. Accepts a string or a list of directories (joined with commas).
+    IMPORTANT: --dir_plugins REPLACES the default, so if you set it you must also
+    include the container's bundled Plugins directory (the one holding CADD.pm/
+    REVEL.pm), otherwise those plugins stop being found. Left empty -> the flag is
+    omitted and VEP uses its default plugin directory.
+    """
     parts = ["--everything", "--total_length", "--offline", "--cache"]
+    if dir_plugins:
+        if isinstance(dir_plugins, (list, tuple)):
+            dir_plugins = ",".join(str(d) for d in dir_plugins if str(d).strip())
+        if str(dir_plugins).strip():
+            parts += ["--dir_plugins", str(dir_plugins)]
     for name, path in plugins.items():
-        if isinstance(path, (list, tuple)):
+        if path is None or path == "" or (isinstance(path, (list, tuple)) and len(path) == 0):
+            parts.append(f"--plugin {name}")
+        elif isinstance(path, (list, tuple)):
             parts.append(f"--plugin {name},{','.join(map(str, path))}")
         else:
             parts.append(f"--plugin {name},{path}")
     return " ".join(parts)
 
 def build_nextflow_command(env_name, input_file: Path, outdir: Path, config: dict, nextflow_config_file: str) -> list[str]:
-    vep_args = build_vep_custom_args(config["vep_plugins"])
+    vep_args = build_vep_custom_args(config["vep_plugins"], config.get("vep_dir_plugins"))
     prefix = ["conda", "run", "-n", env_name] if env_name else []
     return prefix + [
         "nextflow", "run", "nf-core/sarek", "-r", "3.5.1", "-resume",
@@ -153,7 +280,7 @@ def main():
         logging.error(f"Nextflow config not found: {nextflow_config_file}")
         sys.exit(1)
 
-    logging.info("# --- Run Sarek pipeline from annotation step ---")
+    logging.info("# --- Normalize + annotate joint VCF (Sarek annotation step) ---")
     logging.info(f"Project         : {project}")
     logging.info(f"Sarek input file: {input_file}")
     logging.info(f"Output dir      : {output_dir}")
@@ -163,7 +290,18 @@ def main():
     logging.info(f"NXF_OPTS        : {os.environ.get('NXF_OPTS')}")
 
     start = time.time()
-    cmd = build_nextflow_command(conda_env, input_file, output_dir, config, str(nextflow_config_file))
+
+    # Normalize every VCF in the samplesheet BEFORE annotation (bcftools norm -m
+    # -any -f fasta): required so records match gnomAD's left-aligned, biallelic
+    # representation. Produces a rewritten samplesheet pointing at normalized VCFs.
+    logging.info("# Normalizing input VCF(s) before annotation")
+    norm_dir = output_dir / "normalized_vcfs"
+    norm_samplesheet = norm_dir / "samplesheet_normalized.csv"
+    if not normalize_samplesheet(conda_env, config["fasta"], input_file, norm_dir, norm_samplesheet):
+        logging.error("Normalization step failed; not proceeding to annotation.")
+        sys.exit(1)
+
+    cmd = build_nextflow_command(conda_env, norm_samplesheet, output_dir, config, str(nextflow_config_file))
 
     ok = run_command(cmd)  # expects True/False
     if not ok:

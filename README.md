@@ -9,13 +9,13 @@ This repository contains scripts and configuration files for running the [`nf-co
 ## Steps
 
 - Step 1: [`s01_generate_sarek_fastq_input.py`](https://github.com/bryndisy/sarek-processing/blob/main/s01_generate_sarek_fastq_input.py)
-Searches a directory containing FASTQ files and generates the input .csv file required to run the full nf-core/sarek germline pipeline from the FASTQ stage. 
+Searches a directory containing FASTQ files and generates the input .csv file required to run the nf-core/sarek germline calling pipeline (Step 2a) from the FASTQ stage. 
 
 - Step 2a: [`s02a_run_sarek_germline.py`](https://github.com/bryndisy/sarek-processing/blob/main/s02a_run_sarek_germline.py)
-Runs the full nf-core/sarek pipeline for germline data (from FASTQs to annotated VCFs) for either **WES** or **WGS** data, selected with `--mode {wes,wgs}`, using a JSON configuration file for all paths, VEP plugins, and dbNSFP settings. Mode-specific Nextflow resource settings live in [`wes.config`](https://github.com/bryndisy/sarek-processing/blob/main/wes.config) / [`wgs.config`](https://github.com/bryndisy/sarek-processing/blob/main/wgs.config). For WES, pass the capture-kit target BED via `--intervals` to restrict calling/QC to the exome targets. 
+Runs the nf-core/sarek germline **calling** pipeline (from FASTQs to the joint-called VCF; `--tools haplotypecaller`) for either **WES** or **WGS** data, selected with `--mode {wes,wgs}`, using a JSON configuration file for reference paths. Mode-specific Nextflow resource settings live in [`wes.config`](https://github.com/bryndisy/sarek-processing/blob/main/wes.config) / [`wgs.config`](https://github.com/bryndisy/sarek-processing/blob/main/wgs.config). For WES, pass the capture-kit target BED via `--intervals` to restrict calling/QC to the exome targets. This step **does not annotate** — annotation is done by Step 2b, which first normalizes the joint VCF (see the note below on why the order matters).
 
 - Step 2b: [`s02b_run_sarek_annotation.py`](https://github.com/bryndisy/sarek-processing/blob/main/s02b_run_sarek_annotation.py)
-Runs the nf-core/sarek pipeline from the annotation step using a JSON configuration file for all paths, VEP plugins, and dbNSFP settings.
+**Normalizes and then annotates** the joint-called VCF. Every VCF in the input samplesheet is first normalized with `bcftools norm -m -any -f <fasta>` (split multiallelics + left-align/trim indels), then nf-core/sarek's annotation step runs VEP/dbNSFP on the normalized VCF. Normalization is mandatory for correct gnomAD/dbNSFP matching and runs on **every** annotation run — see [Why normalization is required](#why-normalization-is-required-before-annotation). The germline workflow is therefore sequential: **Step 2a (call) → Step 2b (normalize + annotate)**.
 
 - Step 3: [`s03_filter_vcf.py`](https://github.com/bryndisy/sarek-processing/blob/main/s03_filter_vcf.py)
 VCF-level filtering in sub-steps: (1) keep only variants with FILTER == PASS; (2) mask low-confidence sample genotypes to missing (`./.`) where per-genotype depth or quality falls below threshold (default DP ≥ 10, GQ ≥ 20), using `bcftools +setGT`; (3) drop sites where, after masking, no sample carries an alt allele (all `0/0` or `./.`) — disable with `--keep-no-alt-sites`. Otherwise sites are retained and only failing genotypes are masked.
@@ -42,7 +42,7 @@ Filters out specific samples, only keeps samples in sample_list.txt and creates 
 
 ## What nf-core/sarek does (Step 2)
 
-[nf-core/sarek](https://nf-co.re/sarek/) is a Nextflow workflow that takes raw sequencing reads through to annotated variant calls. Steps 2a/2b drive it with germline settings (`--genome GATK.GRCh38`, `--joint_germline true`, `--tools haplotypecaller,vep`), and all the heavy tools run inside Singularity containers — nothing besides Nextflow needs to be installed locally.
+[nf-core/sarek](https://nf-co.re/sarek/) is a Nextflow workflow that takes raw sequencing reads through to annotated variant calls. This pipeline drives it with germline settings (`--genome GATK.GRCh38`, `--joint_germline true`) in **two separate runs**: Step 2a does calling (`--tools haplotypecaller`), then Step 2b normalizes the joint VCF and does annotation (`--tools vep`). All the heavy tools run inside Singularity containers — nothing besides Nextflow (and bcftools, for the normalization in Step 2b) needs to be installed locally.
 
 With these settings, Sarek runs the following stages:
 
@@ -55,27 +55,30 @@ With these settings, Sarek runs the following stages:
    - **GATK HaplotypeCaller** per sample, emitting a **GVCF**.
    - **Joint genotyping** across all samples (GenomicsDBImport → GenotypeGVCFs) into a single **multi-sample VCF**.
    - **Filtering**: variant recalibration (VQSR) / hard filtering, which stamps the `FILTER` column (`PASS` vs. filtered). *This is the `FILTER` field that Step 3 keys on.*
-3. **Annotation**
+3. **Normalization** (Step 2b, before annotation — done by this pipeline, not Sarek)
+   - `bcftools norm -m -any -f <fasta>` splits multiallelic records into biallelic ones and left-aligns/trims indels, so that variants match the representation used by gnomAD and dbNSFP. **Sarek does not do this on its own**, so Step 2b runs it explicitly on every joint VCF before handing it to VEP. See [Why normalization is required](#why-normalization-is-required-before-annotation).
+4. **Annotation**
    - **Ensembl VEP** annotates every variant with consequence, IMPACT, gene/transcript, MANE/canonical flags, ClinVar, gnomAD frequencies, and the in-silico predictors configured via the plugins/dbNSFP fields in `s02_vep_settings_plugins_paths.json` (REVEL, CADD, AlphaMissense, etc.). Annotations are packed into the `CSQ` INFO field — this is what Step 4 splits out.
-4. **Quality control**
+5. **Quality control**
    - Per-sample and per-run QC (FastQC, samtools/mosdepth coverage, variant-calling metrics) aggregated into a **MultiQC** report.
 
-For **WES**, `--intervals <targets.bed>` restricts calling and coverage QC to the capture-kit regions (see *Exome target intervals* below). **Step 2b** skips stages 1–2 and runs only stage 3 (annotation) when you already have called VCFs.
+For **WES**, `--intervals <targets.bed>` restricts calling and coverage QC to the capture-kit regions (see *Exome target intervals* below). Stages 1–2 and QC run in **Step 2a**; stages 3–4 (normalize + annotate) run in **Step 2b**.
 
 ### Sarek output
 
 Everything is written under `<base_dir>/<project>/output/sarek_results/`:
 
-| Path | Contents |
-|------|----------|
-| `preprocessing/` | Recalibrated, duplicate-marked CRAM/BAM files and their indexes. |
-| `variant_calling/haplotypecaller/` | Per-sample GVCFs and the joint-genotyped, recalibrated VCF (pre-annotation). |
-| `annotation/haplotypecaller/joint_variant_calling/` | **The annotated, joint-called multi-sample VCF** (`*.vcf.gz` + `.tbi`). **This is the file Step 3 picks up** to begin downstream processing. |
-| `reports/` | Per-tool QC outputs (FastQC, mosdepth/coverage, samtools stats, bcftools stats, etc.). |
-| `multiqc/` | Aggregated `multiqc_report.html` summarising QC across all samples. |
-| `pipeline_info/` | Nextflow execution reports, timeline, software versions, and the run trace. |
+| Path | Contents | Produced by |
+|------|----------|-------------|
+| `preprocessing/` | Recalibrated, duplicate-marked CRAM/BAM files and their indexes. | 2a |
+| `variant_calling/haplotypecaller/` | Per-sample GVCFs and the joint-genotyped, recalibrated VCF (`joint_germline_recalibrated.vcf.gz`) — **the input to Step 2b**. | 2a |
+| `../normalized_vcfs/` | The joint VCF after `bcftools norm` (+ index) and the rewritten samplesheet that points Sarek's annotation run at it. *(sits under `output/`, not `sarek_results/`.)* | 2b |
+| `annotation/haplotypecaller/joint_variant_calling/` | **The normalized, annotated, joint-called multi-sample VCF** (`*.vcf.gz` + `.tbi`). **This is the file Step 3 picks up** to begin downstream processing. | 2b |
+| `reports/` | Per-tool QC outputs (FastQC, mosdepth/coverage, samtools stats, bcftools stats, etc.). | 2a |
+| `multiqc/` | Aggregated `multiqc_report.html` summarising QC across all samples. | 2a |
+| `pipeline_info/` | Nextflow execution reports, timeline, software versions, and the run trace. | 2a/2b |
 
-> The annotated VCF in `annotation/.../joint_variant_calling/` is the single hand-off point between Sarek and the downstream steps — Step 3 globs that directory for `*.vcf.gz`.
+> The **normalized** annotated VCF in `annotation/.../joint_variant_calling/` is the single hand-off point between Sarek and the downstream steps — Step 3 globs that directory for `*.vcf.gz`.
 
 ---
 
@@ -84,7 +87,7 @@ Everything is written under `<base_dir>/<project>/output/sarek_results/`:
 The whole pipeline runs from a **single conda environment**. It needs only:
 
 - **Nextflow** — launches nf-core/sarek in Step 2 (the actual aligners/callers/VEP run inside Sarek's Singularity containers, so they are *not* installed here).
-- **bcftools** (≥ 1.11, for the `+split-vep` and `+setGT` plugins) — used by Steps 3–6.
+- **bcftools** (≥ 1.11, for `norm`, `+split-vep` and `+setGT`) — used to normalize the joint VCF in Step 2b and for filtering/column selection in Steps 3–6.
 - **pandas** and **openpyxl** (with Python) — used by the Step 7 priority-scoring step (openpyxl writes the `.xlsx` output).
 
 Create it once with:
@@ -118,10 +121,12 @@ python s01_generate_sarek_fastq_input.py \
   --base-dir <base_dir>
 ```
 
-### Step 2a — run full Sarek germline pipeline (WES or WGS)
+### Step 2a — run Sarek germline calling (WES or WGS)
+Calling only; produces the joint VCF that Step 2b normalizes and annotates.
 - **Inputs:** the FASTQ input CSV from Step 1 (`--samplesheet`).
-- **Configs:** `s02_vep_settings_plugins_paths.json` (reference/VEP/dbNSFP paths, via `--config`); resource settings come automatically from `wes.config` or `wgs.config` depending on `--mode`.
+- **Configs:** `s02_vep_settings_plugins_paths.json` (only the reference paths `fasta`/`fasta_fai`/`dict` are read here — VEP/dbNSFP keys are used by Step 2b, so the same config is shared); resource settings come automatically from `wes.config` or `wgs.config` depending on `--mode`.
 - **WES:** add `--intervals <targets.bed>` (see *Exome target intervals* below). **WGS:** omit `--mode`-specific extras.
+- **Output:** `…/output/sarek_results/variant_calling/haplotypecaller/joint_variant_calling/joint_germline_recalibrated.vcf.gz` — the VCF to list in the Step 2b samplesheet.
 ```bash
 # WES
 python s02a_run_sarek_germline.py \
@@ -143,10 +148,12 @@ python s02a_run_sarek_germline.py \
   -e env_sarek
 ```
 
-### Step 2b — run Sarek from the annotation step only
-Use this when you already have called VCFs and only need annotation.
-- **Inputs:** a Sarek annotation samplesheet listing the VCFs to annotate (`--samplesheet`).
-- **Configs:** `s02_vep_settings_plugins_paths.json` (`--config`); resources from `annotation.config` (loaded automatically).
+### Step 2b — normalize + annotate the joint VCF
+Run this after Step 2a (or whenever you have a called VCF to annotate). Every VCF in the samplesheet is first normalized with `bcftools norm -m -any -f <fasta>`, then annotated. **Do not skip this step and annotate directly in Sarek** — un-normalized annotation mis-matches gnomAD/dbNSFP (see below).
+- **Inputs:** a Sarek annotation samplesheet listing the VCF(s) to annotate (`--samplesheet`) — typically the `joint_germline_recalibrated.vcf.gz` from Step 2a.
+- **Configs:** `s02_vep_settings_plugins_paths.json` (`--config`; `fasta` is used for normalization, plus the VEP/dbNSFP settings for annotation); resources from `annotation.config` (loaded automatically).
+- **Outputs:** normalized VCF(s) + rewritten samplesheet under `…/output/normalized_vcfs/`; the annotated joint VCF under `…/output/sarek_results/annotation/haplotypecaller/joint_variant_calling/`.
+- **Requires** `bcftools` on the environment (it is in `env_sarek`).
 ```bash
 python s02b_run_sarek_annotation.py \
   -p <project> \
@@ -155,6 +162,9 @@ python s02b_run_sarek_annotation.py \
   --config s02_vep_settings_plugins_paths.json \
   -e env_sarek
 ```
+
+#### Why normalization is required before annotation
+VEP, dbNSFP and the gnomAD custom annotation all match variants by **exact `CHROM:POS:REF:ALT`**, and gnomAD/dbNSFP store records in **normalized** form — one ALT allele per line (biallelic), with indels **left-aligned and trimmed**. GATK's joint VCF does not guarantee that representation: it can emit **multiallelic** sites (several ALTs on one line) and indels that are not left-aligned. If such a record is annotated as-is, its representation never matches the database key, so the variant comes back with **no gnomAD frequency** and looks *novel* even when it is common (this is what made a 27%-frequency variant appear absent from gnomAD). `bcftools norm -m -any -f <fasta>` fixes both problems — `-m -any` splits multiallelics into biallelic records and `-f <fasta>` left-aligns/trims against the reference. Sarek does **not** normalize before VEP, so Step 2b does it explicitly on every run.
 
 ### Step 3 — filter VCF (PASS + genotype DP/GQ mask)
 - **Inputs:** the joint-genotyped VCF under `…/output/sarek_results/annotation/haplotypecaller/joint_variant_calling/` (found automatically).
@@ -255,11 +265,12 @@ The score is the sum of four weighted components. Each component is normalised t
 |-----------|-------:|------------------|------------------------|
 | **IMPACT** | 30 | VEP consequence severity | HIGH = 1.0, MODERATE = 0.6, LOW = 0.15, MODIFIER = 0.0 |
 | **ClinVar** | 30 | Clinical significance (CLNSIG) | Pathogenic = 1.0, Likely_pathogenic = 0.8, Conflicting = 0.4, Uncertain = 0.3, Benign/Likely_benign = 0.0 |
-| **In-silico** | 25 | Pathogenicity predictors | Mean of available predictors: REVEL (0–1), CADD_PHRED (capped at 40 → 1.0), AlphaMissense score (0–1) |
+| **In-silico** | 25 | Pathogenicity predictors | Mean of available missense predictors: REVEL, AlphaMissense, MetaRNN, ClinPred (all 0–1) and CADD_PHRED (capped at 40 → 1.0), then **lifted by the strongest SpliceAI delta score** via `max()` |
 | **Rarity** | 15 | Population allele frequency | novel = 1.0, ≤0.0001 = 0.9, ≤0.001 = 0.6, ≤0.01 = 0.3, common = 0.0 |
 
 Notes:
-- **In-silico** averages only the predictors that are present, so a variant isn't penalised for missing scores; if none are present the component is 0.
+- **In-silico** averages only the predictors that are present, so a variant isn't penalised for missing scores; if none are present the component is 0. The averaged predictors are configured in `insilico.components`.
+- **SpliceAI** is folded in as `max(missense_mean, best_SpliceAI_DS)` (the largest of the four `SpliceAI_pred_DS_*` delta scores), so a splice-affecting variant that the missense predictors miss still scores, without a weak splice signal diluting a strong missense one.
 - **Rarity** uses gnomAD POPMAX AF (`gnomAD4.1_joint_POPMAX_AF`), falling back to VEP `MAX_AF`. A **missing AF is treated as novel** (highest rarity), on the assumption that absence from gnomAD means rare rather than unmeasured.
 - The score **ranks** variants; it is not a probability of pathogenicity.
 
@@ -269,12 +280,16 @@ The tier is a coarse, rule-based bucket evaluated top-down (first matching rule 
 
 | Tier | Assigned when (defaults) |
 |------|--------------------------|
-| **1** | ClinVar Pathogenic/Likely_pathogenic, **or** HIGH impact and rare (AF ≤ 0.001). |
-| **2** | Predicted damaging (REVEL ≥ 0.7, **or** CADD ≥ 20, **or** AlphaMissense = likely_pathogenic, **or** HIGH impact) and not common (AF ≤ 0.01). |
+| **1** | ClinVar Pathogenic/Likely_pathogenic, **or** HIGH impact and rare (AF ≤ 0.001), **or** strong splice (SpliceAI DS ≥ 0.8) and rare. |
+| **2** | Predicted damaging (REVEL ≥ 0.7, **or** CADD ≥ 20, **or** AlphaMissense = likely_pathogenic, **or** BayesDel = D, **or** SpliceAI DS ≥ 0.5, **or** HIGH impact) and not common (AF ≤ 0.01). |
 | **3** | HIGH or MODERATE impact and not common (AF ≤ 0.05). |
 | **4** | Everything else. |
 
 A **ClinVar Benign/Likely_benign call overrides everything and demotes the variant to tier 4**, even if it is HIGH impact or rare (`benign_demote: true`).
+
+**LOFTEE confidence** (`loftee_lc_demote: true`): a HIGH-impact loss-of-function call that LOFTEE flags **low-confidence (`LoF = LC`)** does not earn the HIGH-impact promotion into Tiers 1–2 — it still reaches Tier 3 (which uses the raw impact) for review, rather than being dropped. If LOFTEE did not run, `vep_LoF` is empty and nothing is demoted.
+
+All of the SpliceAI/BayesDel/LOFTEE signals **degrade gracefully**: an absent field simply has no effect, so the tiering is unchanged for variants (or whole runs) where those annotations are missing.
 
 The output (written as both `s7_priority_score.tsv` and `s7_priority_score.xlsx`) is sorted by tier ascending, then score descending, so the highest-priority variants are at the top.
 

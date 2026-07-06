@@ -29,8 +29,16 @@
     "components": {
       "vep_REVEL": 1.0,
       "vep_CADD_PHRED": 1.0,
-      "vep_AlphaMissense_score": 1.0
-    }
+      "vep_AlphaMissense_score": 1.0,
+      "vep_MetaRNN_score": 1.0,
+      "vep_ClinPred_score": 1.0
+    },
+    "splice_fields": [
+      "vep_SpliceAI_pred_DS_AG",
+      "vep_SpliceAI_pred_DS_AL",
+      "vep_SpliceAI_pred_DS_DG",
+      "vep_SpliceAI_pred_DS_DL"
+    ]
   },
 
   "rarity_af_field": "vep_gnomAD4.1_joint_POPMAX_AF",
@@ -45,10 +53,14 @@
 
   "tiers": {
     "benign_demote": true,
+    "loftee_lc_demote": true,
     "tier1_high_impact_max_af": 0.001,
+    "tier1_spliceai_min": 0.8,
     "tier2_revel_min": 0.7,
     "tier2_cadd_min": 20,
     "tier2_alphamissense_pred": "likely_pathogenic",
+    "tier2_bayesdel_pred": "D",
+    "tier2_spliceai_min": 0.5,
     "tier2_max_af": 0.01,
     "tier3_max_af": 0.05
   }

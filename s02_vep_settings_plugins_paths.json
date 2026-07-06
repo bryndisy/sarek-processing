@@ -3,11 +3,26 @@
     "fasta_fai": "/data/Resources/References/hg38.GATK/hg38.GATK.fa.fai",
     "dict": "/data/Resources/References/hg38.GATK/hg38.GATK.dict",
     "vep_cache": "/home/by215/.vep",
+    "vep_dir_plugins": [
+        "/home/by215/.vep/Plugins",
+        "/home/by215/.vep/plugin_data/loftee-grch38"
+    ],
     "vep_plugins": {
         "REVEL": "/home/by215/.vep/plugin_data/REVEL_v1.3/new_tabbed_revel_grch38.tsv.gz",
         "CADD": [
             "/home/by215/.vep/plugin_data/CADDv1.7_hg38/whole_genome_SNVs.tsv.gz",
             "/home/by215/.vep/plugin_data/CADDv1.7_hg38/gnomad.genomes.r4.0.indel.tsv.gz"
+        ],
+        "NMD": [],
+        "LoF": [
+            "loftee_path:/home/by215/.vep/plugin_data/loftee-grch38",
+            "human_ancestor_fa:/home/by215/.vep/plugin_data/loftee-grch38/human_ancestor.fa.gz",
+            "conservation_file:/home/by215/.vep/plugin_data/loftee-grch38/loftee.sql",
+            "gerp_bigwig:/home/by215/.vep/plugin_data/loftee-grch38/gerp_conservation_scores.homo_sapiens.GRCh38.bw"
+        ],
+        "SpliceAI": [
+            "snv=/home/by215/.vep/plugin_data/SpliceAI/spliceai_scores.raw.snv.hg38.vcf.gz",
+            "indel=/home/by215/.vep/plugin_data/SpliceAI/spliceai_scores.raw.indel.hg38.vcf.gz"
         ]
     },
     "dbnsfp": "/home/by215/Resources/Databases/dbNSFP/dbNSFP5.1a/dbNSFP_for_VEP_SnpSift/dbNSFP5.1a_grch38.gz",
@@ -15,7 +30,12 @@
     "dbnsfp_fields": [
         "clinvar_id","clinvar_clnsig","clinvar_trait","clinvar_review",
         "MutationTaster_score","MutationTaster_pred","MetaSVM_score","MetaSVM_pred",
-        "AlphaMissense_score","AlphaMissense_pred","gnomAD4.1_joint_AC","gnomAD4.1_joint_AN",
+        "MetaLR_score","MetaLR_pred","MetaRNN_score","MetaRNN_pred",
+        "BayesDel_addAF_score","BayesDel_addAF_pred","ClinPred_score","ClinPred_pred",
+        "AlphaMissense_score","AlphaMissense_pred",
+        "Aloft_pred","Aloft_Confidence","Aloft_prob_Dominant","Aloft_prob_Recessive","Aloft_prob_Tolerant",
+        "GERP_91_mammals","phyloP100way_vertebrate",
+        "gnomAD4.1_joint_AC","gnomAD4.1_joint_AN",
         "gnomAD4.1_joint_AF","gnomAD4.1_joint_nhomalt","gnomAD4.1_joint_POPMAX_AC",
         "gnomAD4.1_joint_POPMAX_AN","gnomAD4.1_joint_POPMAX_AF",
         "gnomAD4.1_joint_POPMAX_nhomalt"

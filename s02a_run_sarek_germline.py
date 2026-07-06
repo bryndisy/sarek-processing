@@ -6,8 +6,16 @@ Created On   : 23/06/2026
 Last Modified: 23/06/2026
 
 Description:
-Run the full nf-core/sarek germline pipeline (from FASTQs to annotated VCFs) for
-either whole-exome (WES) or whole-genome (WGS) data, selected with --mode.
+Run the nf-core/sarek germline *calling* pipeline (from FASTQs to the joint-called
+VCF) for either whole-exome (WES) or whole-genome (WGS) data, selected with --mode.
+
+This step deliberately stops at variant calling and does NOT annotate. Annotation
+is done separately by s02b_run_sarek_annotation.py, which first normalizes the
+joint VCF (bcftools norm -m -any -f <fasta>) and then runs VEP/dbNSFP. That order
+matters: VEP/dbNSFP/gnomAD match on exact CHROM:POS:REF:ALT and gnomAD stores
+left-aligned, biallelic records, so annotating an un-normalized joint VCF makes
+multiallelic sites and non-left-aligned indels look "novel" when they are not.
+The correct workflow is therefore:  s02a (call) -> s02b (normalize + annotate).
 
 This consolidates the former s02_run_sarek_full_germline.py (WES) and
 s02_run_sarek_full_wgs_germline.py (WGS) into a single script so the two cannot
@@ -20,7 +28,9 @@ Differences driven by --mode:
   wgs : whole-genome defaults (no --wes); heavier resource config (wgs.config)
         with per-process tuning and a dedicated workDir.
 
-All reference/VEP/dbNSFP paths come from the JSON config (s02_vep_settings_plugins_paths.json).
+Reference paths (fasta, fasta_fai, dict) come from the JSON config
+(s02_vep_settings_plugins_paths.json). VEP/dbNSFP keys in that config are ignored
+here (they are used by s02b), so the same config file can be shared by both steps.
 
 Usage:
 python s02_run_sarek_germline.py \
@@ -47,9 +57,9 @@ conda, nextflow
 
 Notes to user:
 # Configuration file:
-# Modify s02_vep_settings_plugins_paths.json to set paths to reference databases,
-# VEP plugins and dbNSFP fields. If dbNSFP is used, check whether a commercial
-# licence is required; if not used, edit the config to exclude it.
+# This calling step only reads the reference paths (fasta, fasta_fai, dict) from
+# s02_vep_settings_plugins_paths.json; the VEP/dbNSFP keys are consumed later by
+# s02b. The same config file is shared by both steps.
 # Modify wes.config / wgs.config to match your host (workDir, cacheDir, CPUs).
 
 # VCFTOOLS_TSTV_COUNT crashes and pipeline fails:
@@ -83,23 +93,6 @@ from utils import format_runtime, check_conda_env, run_command
 # ----------------------------
 # Helpers: Build commands and arguments
 # ----------------------------
-def build_vep_custom_args(plugins: dict) -> str:
-    """
-    Build --vep_custom_args from a dict like:
-      {
-        "REVEL": "/path/revel.tsv.gz",
-        "CADD": ["/path/snv.tsv.gz", "/path/indel.tsv.gz"]
-      }
-    """
-    parts = ["--everything", "--total_length", "--offline", "--cache"]
-    for name, path in plugins.items():
-        if isinstance(path, (list, tuple)):
-            parts.append(f"--plugin {name},{','.join(map(str, path))}")
-        else:
-            parts.append(f"--plugin {name},{path}")
-    return " ".join(parts)
-
-
 def build_nextflow_command(
     env_name: str | None,
     mode: str,
@@ -110,9 +103,11 @@ def build_nextflow_command(
     extra_config_path: str | None,
     intervals: Path | None,
 ) -> list[str]:
-    """Build the Nextflow command for nf-core/sarek (WES or WGS germline)."""
-    vep_args = build_vep_custom_args(config["vep_plugins"])
+    """Build the Nextflow command for nf-core/sarek germline *calling* (WES or WGS).
 
+    Annotation is intentionally omitted here (--tools haplotypecaller only): the
+    joint VCF must be normalized before VEP/dbNSFP, which is handled by s02b.
+    """
     prefix = ["conda", "run", "-n", env_name] if env_name else []
 
     cmd = prefix + [
@@ -127,7 +122,7 @@ def build_nextflow_command(
     if extra_config_path:
         cmd += ["-c", extra_config_path]
 
-    # Shared pipeline args
+    # Shared pipeline args (calling only; no VEP/dbNSFP)
     cmd += [
         "--input", str(input_file),
         "--outdir", str(outdir / "sarek_results"),
@@ -135,17 +130,10 @@ def build_nextflow_command(
         "--step", "mapping",
         "--aligner", "bwa-mem",
         "--joint_germline", "true",
-        "--tools", "haplotypecaller,vep",
-        "--vep_cache", config["vep_cache"],
-        "--vep_include_fasta", "true",
+        "--tools", "haplotypecaller",
         "--fasta", config["fasta"],
         "--fasta_fai", config["fasta_fai"],
         "--dict", config["dict"],
-        "--vep_custom_args", vep_args,
-        "--vep_dbnsfp", "true",
-        "--dbnsfp", config["dbnsfp"],
-        "--dbnsfp_tbi", config["dbnsfp_tbi"],
-        "--dbnsfp_fields", ",".join(config["dbnsfp_fields"]),
     ]
 
     # Mode-specific CLI flags
@@ -215,8 +203,9 @@ def main():
         logging.error(f"Failed to load JSON config '{args.config}': {e}")
         sys.exit(1)
 
-    # Required keys check
-    required = ["vep_cache", "fasta", "fasta_fai", "dict", "dbnsfp", "dbnsfp_tbi", "dbnsfp_fields", "vep_plugins"]
+    # Required keys check (calling only needs the reference; VEP/dbNSFP keys are
+    # used later by s02b and are ignored here)
+    required = ["fasta", "fasta_fai", "dict"]
     missing = [k for k in required if k not in config]
     if missing:
         logging.error(f"Missing keys in config: {', '.join(missing)}")
@@ -253,7 +242,7 @@ def main():
     if extra_config_path is None:
         logging.warning(f"Optional config not found (continuing without it): {extra_config}")
 
-    logging.info("# --- Run full sarek germline pipeline ---")
+    logging.info("# --- Run sarek germline calling pipeline (no annotation) ---")
     logging.info(f"Project           : {project}")
     logging.info(f"Mode              : {mode}")
     logging.info(f"Timestamp         : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -285,8 +274,14 @@ def main():
         sys.exit(1)
 
     logging.info(f"# Runtime: {format_runtime(time.time() - start)}")
+    logging.info(
+        "# Next step: normalize + annotate the joint VCF with s02b "
+        "(sarek_results/variant_calling/haplotypecaller/joint_variant_calling/"
+        "joint_germline_recalibrated.vcf.gz)."
+    )
     logging.info("# --- End of run ---")
-    print(f"Running sarek {mode} pipeline completed. Log written to {log_file}")
+    print(f"Running sarek {mode} calling pipeline completed. Log written to {log_file}")
+    print("Next: run s02b_run_sarek_annotation.py to normalize + annotate the joint VCF.")
 
 
 if __name__ == "__main__":

@@ -248,6 +248,13 @@ def main():
     # Better Nextflow diagnostics unless already set
     os.environ.setdefault("NXF_OPTS", "-Dnextflow.trace.stack=true")
 
+    # Pin a Nextflow version compatible with nf-core/sarek 3.5.1. Newer Nextflow
+    # (25.10+/26.x) uses a strict config parser that fails to parse sarek 3.5.1's
+    # nextflow.config ("Variable declarations cannot be mixed with config
+    # statements"). The launcher honours NXF_VER and fetches this engine version.
+    # setdefault so an explicit `export NXF_VER=...` still overrides it.
+    os.environ.setdefault("NXF_VER", "24.10.5")
+
     # Load JSON config for VEP
     try:
         with open(args.config) as f:

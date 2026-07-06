@@ -86,7 +86,7 @@ Everything is written under `<base_dir>/<project>/output/sarek_results/`:
 
 The whole pipeline runs from a **single conda environment**. It needs only:
 
-- **Nextflow** — launches nf-core/sarek in Step 2 (the actual aligners/callers/VEP run inside Sarek's Singularity containers, so they are *not* installed here).
+- **Nextflow** (target the **24.10.x LTS** line) — launches nf-core/sarek in Step 2 (the actual aligners/callers/VEP run inside Sarek's Singularity containers, so they are *not* installed here). **Version matters:** newer Nextflow (25.10+/26.x) uses a strict config parser that fails to parse nf-core/sarek 3.5.1's `nextflow.config` (`Variable declarations cannot be mixed with config statements`). Steps 2a/2b pin `NXF_VER=24.10.5` automatically (via `os.environ.setdefault`), so a fresh `conda install nextflow` pulling 26.x still works; override with `export NXF_VER=<version>` if needed.
 - **bcftools** (≥ 1.11, for `norm`, `+split-vep` and `+setGT`) — used to normalize the joint VCF in Step 2b and for filtering/column selection in Steps 3–6.
 - **pandas** and **openpyxl** (with Python) — used by the Step 7 priority-scoring step (openpyxl writes the `.xlsx` output).
 

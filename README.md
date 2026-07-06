@@ -87,20 +87,23 @@ Everything is written under `<base_dir>/<project>/output/sarek_results/`:
 The whole pipeline runs from a **single conda environment**. It needs only:
 
 - **Nextflow** (target the **24.10.x LTS** line) — launches nf-core/sarek in Step 2 (the actual aligners/callers/VEP run inside Sarek's Singularity containers, so they are *not* installed here). **Version matters:** newer Nextflow (25.10+/26.x) uses a strict config parser that fails to parse nf-core/sarek 3.5.1's `nextflow.config` (`Variable declarations cannot be mixed with config statements`). Steps 2a/2b pin `NXF_VER=24.10.5` automatically (via `os.environ.setdefault`), so a fresh `conda install nextflow` pulling 26.x still works; override with `export NXF_VER=<version>` if needed.
+- **Singularity** — the container engine Nextflow uses to run Sarek's tools. On this setup it is provided **via conda** (`singularity=3.8.6` from conda-forge), not as a system module, so it must be **in the environment**. (If your host instead provides Singularity/Apptainer as a system module, load that and omit it from the conda env.)
 - **bcftools** (≥ 1.11, for `norm`, `+split-vep` and `+setGT`) — used to normalize the joint VCF in Step 2b and for filtering/column selection in Steps 3–6.
 - **pandas** and **openpyxl** (with Python) — used by the Step 7 priority-scoring step (openpyxl writes the `.xlsx` output).
 
 Create it once with:
 
 ```bash
-conda create -n env_sarek -c conda-forge -c bioconda nextflow "bcftools>=1.11" pandas openpyxl python
+conda create -n env_sarek -c conda-forge -c bioconda "nextflow=24.10.5" singularity=3.8.6 "bcftools>=1.11" pandas openpyxl python
 ```
+
+> **Nextflow version is pinned deliberately.** nf-core/sarek 3.5.1 does not parse under Nextflow 25.10+/26.x (strict config parser), so the env installs **24.10.5**, and Steps 2a/2b also set `NXF_VER=24.10.5` at runtime — the two match, so the installed engine is exactly what runs (offline-safe, no download needed). Do **not** replace this with a bare `nextflow`: a fresh install now pulls 26.x and Step 2 fails with `Variable declarations cannot be mixed with config statements`. If `24.10.5` is unavailable for your platform, install another `24.10.x` and change the `NXF_VER` pin in `s02a`/`s02b` to match.
 
 Then `conda activate env_sarek` (or pass `-e env_sarek` to the steps that take it). The examples below use `env_sarek`.
 
-> **Why one environment?** Nextflow, bcftools and pandas have no conflicting dependencies, and Sarek's own tools live in containers, so a single env keeps things simple — one name to activate and to pass to every `-e` flag. You can split it into separate envs (e.g. one for Nextflow, one for bcftools/pandas) if you prefer strict isolation, but it is not required.
+> **Why one environment?** Nextflow, Singularity, bcftools and pandas have no conflicting dependencies, and Sarek's own tools live in containers, so a single env keeps things simple — one name to activate and to pass to every `-e` flag. You can split it into separate envs if you prefer strict isolation, but it is not required.
 >
-> **Note:** Nextflow/Sarek also needs a container engine (**Singularity/Apptainer**) and Java available on the system. Singularity is usually provided as a system module rather than via conda; Java is pulled in by the Nextflow conda package.
+> **Note on the container engine:** Sarek runs its tools inside **Singularity** containers, so the `singularity` binary must be on `PATH` when Steps 2a/2b launch (`bash: singularity: command not found` / `Failed to pull singularity image, status 127` means it isn't). Here it is installed **into the conda env** (above); if instead your host provides Singularity/Apptainer as a **system module**, `module load` it before running and drop `singularity=3.8.6` from the create command. Either way, set `export NXF_SINGULARITY_CACHEDIR=/path/to/persistent/cache` (e.g. `~/.singularity/cache`) so pulled images are reused across runs instead of re-downloaded into `work/`. Java is pulled in by the Nextflow conda package.
 
 ## How to run each step
 

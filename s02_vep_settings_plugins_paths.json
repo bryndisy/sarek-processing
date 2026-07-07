@@ -3,10 +3,7 @@
     "fasta_fai": "/data/Resources/References/hg38.GATK/hg38.GATK.fa.fai",
     "dict": "/data/Resources/References/hg38.GATK/hg38.GATK.dict",
     "vep_cache": "/home/by215/.vep",
-    "vep_dir_plugins": [
-        "/home/by215/.vep/Plugins",
-        "/home/by215/.vep/plugin_data/loftee-grch38"
-    ],
+    "vep_dir_plugins": [],
     "vep_plugins": {
         "REVEL": "/home/by215/.vep/plugin_data/REVEL_v1.3/new_tabbed_revel_grch38.tsv.gz",
         "CADD": [
@@ -14,19 +11,13 @@
             "/home/by215/.vep/plugin_data/CADDv1.7_hg38/gnomad.genomes.r4.0.indel.tsv.gz"
         ],
         "NMD": [],
-        "LoF": [
-            "loftee_path:/home/by215/.vep/plugin_data/loftee-grch38",
-            "human_ancestor_fa:/home/by215/.vep/plugin_data/loftee-grch38/human_ancestor.fa.gz",
-            "conservation_file:/home/by215/.vep/plugin_data/loftee-grch38/loftee.sql",
-            "gerp_bigwig:/home/by215/.vep/plugin_data/loftee-grch38/gerp_conservation_scores.homo_sapiens.GRCh38.bw"
-        ],
         "SpliceAI": [
             "snv=/home/by215/.vep/plugin_data/SpliceAI/spliceai_scores.raw.snv.hg38.vcf.gz",
             "indel=/home/by215/.vep/plugin_data/SpliceAI/spliceai_scores.raw.indel.hg38.vcf.gz"
         ]
     },
-    "dbnsfp": "/home/by215/Resources/Databases/dbNSFP/dbNSFP5.1a/dbNSFP_for_VEP_SnpSift/dbNSFP5.1a_grch38.gz",
-    "dbnsfp_tbi": "/home/by215/Resources/Databases/dbNSFP/dbNSFP5.1a/dbNSFP_for_VEP_SnpSift/dbNSFP5.1a_grch38.gz.tbi",
+    "dbnsfp": "/home/by215/Resources/Databases/dbNSFP/dbNSFP5.1a/dbNSFP_for_VEP_SnpSift/dbNSFP5.1a.gz",
+    "dbnsfp_tbi":   "/home/by215/Resources/Databases/dbNSFP/dbNSFP5.1a/dbNSFP_for_VEP_SnpSift/dbNSFP5.1a.gz.tbi",
     "dbnsfp_fields": [
         "clinvar_id","clinvar_clnsig","clinvar_trait","clinvar_review",
         "MutationTaster_score","MutationTaster_pred","MetaSVM_score","MetaSVM_pred",

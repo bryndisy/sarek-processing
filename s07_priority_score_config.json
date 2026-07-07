@@ -53,12 +53,12 @@
 
   "tiers": {
     "benign_demote": true,
-    "loftee_lc_demote": true,
+    "aloft_tolerant_demote": true,
     "tier1_high_impact_max_af": 0.001,
     "tier1_spliceai_min": 0.8,
     "tier2_revel_min": 0.7,
     "tier2_cadd_min": 20,
-    "tier2_alphamissense_pred": "likely_pathogenic",
+    "tier2_alphamissense_pred": ["LP", "P"],
     "tier2_bayesdel_pred": "D",
     "tier2_spliceai_min": 0.5,
     "tier2_max_af": 0.01,

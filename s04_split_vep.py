@@ -50,6 +50,7 @@ Consider removing the .vcf option as I am not convinced it is needed, files are 
 
 import sys
 import gzip
+import json
 import time
 import logging
 from pathlib import Path
@@ -73,6 +74,82 @@ def _parse_info(info_field):
         else:
             d[k] = ""
     return d
+
+
+def _unparse_info(info):
+    """Rebuild a VCF INFO string from a dict (as produced by _parse_info),
+    preserving insertion order. An empty value is written as a bare flag."""
+    return ";".join(k if v == "" else f"{k}={v}" for k, v in info.items())
+
+
+def _open_maybe_gz(path):
+    """Open a VCF that may be bgzipped (.gz) or plain text, for reading."""
+    p = str(path)
+    return gzip.open(p, "rt") if p.endswith(".gz") else open(p)
+
+
+def resolve_transcript_specific(in_vcf, out_vcf_plain, fields,
+                                fallback="keep",
+                                feature_key="vep_Feature",
+                                txid_key="vep_Ensembl_transcriptid"):
+    """Reduce '&'-joined, per-transcript dbNSFP INFO fields to the single value for
+    the VEP-picked transcript (transcript-aware selection).
+
+    dbNSFP packs one value per transcript into each field, '&'-joined and aligned to
+    the transcript order in `txid_key` (Ensembl_transcriptid). For each record this
+    picks the value whose dbNSFP transcript matches the VEP-chosen transcript
+    (`feature_key`, i.e. vep_Feature). Only fields that actually contain '&' are
+    touched; single-valued (variant-level) fields pass through unchanged.
+
+    When the picked transcript is not in the dbNSFP list, or a field's value count
+    does not align with the transcript list (guards against fields that use a
+    different transcript ordering), `fallback` decides what to do:
+      "keep"    -> leave the raw '&'-joined list unchanged (no data lost; a later
+                   step, e.g. s07, still reduces it via max/any-hit)
+      "missing" -> set to '.' (strict: dbNSFP has no value for the chosen transcript)
+
+    Returns (records, resolved_values, unmatched_records) for logging.
+    """
+    want = set(fields)
+    records = resolved = unmatched = 0
+
+    with _open_maybe_gz(in_vcf) as fin, open(out_vcf_plain, "w") as fout:
+        for line in fin:
+            if line.startswith("#"):
+                fout.write(line)
+                continue
+            records += 1
+            cols = line.rstrip("\n").split("\t")
+            info = _parse_info(cols[7])
+
+            feature = info.get(feature_key, "")
+            txids = info.get(txid_key, "")
+            tx_list = txids.split("&") if txids not in ("", ".") else []
+            idx = tx_list.index(feature) if feature and feature in tx_list else None
+            if idx is None:
+                unmatched += 1
+
+            changed = False
+            for f in want:
+                v = info.get(f)
+                if not v or "&" not in v:
+                    continue
+                parts = v.split("&")
+                if idx is not None and len(parts) == len(tx_list) and idx < len(parts):
+                    info[f] = parts[idx]
+                    resolved += 1
+                    changed = True
+                elif fallback == "missing":
+                    info[f] = "."
+                    changed = True
+                # fallback == "keep": leave the raw list untouched
+            if changed:
+                cols[7] = _unparse_info(info)
+                fout.write("\t".join(cols) + "\n")
+            else:
+                fout.write(line)
+
+    return records, resolved, unmatched
 
 
 def pick_transcripts_priority(in_vcf_gz, out_vcf_plain):
@@ -129,12 +206,14 @@ def pick_transcripts_priority(in_vcf_gz, out_vcf_plain):
 # ----------------------------
 # Split VEP function and process
 # ----------------------------
-def split_vep_pipeline(in_vcf, out_vcf, conda_env, columns, output_dir, transcript_pick="priority", keep_temp=False):
+def split_vep_pipeline(in_vcf, out_vcf, conda_env, columns, output_dir, transcript_pick="priority",
+                       keep_temp=False, transcript_specific=None, tx_fallback="keep"):
     """
     Run bcftools +split-vep and postprocess:
       1. Split CSQ into separate annotations
       2. Drop redundant CSQ field
       3. Select transcripts (see --transcript-pick)
+      3b. (optional) Resolve per-transcript dbNSFP fields to the picked transcript
       4. Index final VCF
 
     transcript_pick:
@@ -144,6 +223,11 @@ def split_vep_pipeline(in_vcf, out_vcf, conda_env, columns, output_dir, transcri
                      (drops variants with no canonical transcript)
       "all"       -> keep every transcript line (no selection)
 
+    transcript_specific: list of '&'-joined, per-transcript dbNSFP INFO tags (e.g.
+      vep_AlphaMissense_pred) to reduce to the picked transcript's value using
+      vep_Ensembl_transcriptid vs vep_Feature. Empty/None disables the resolution.
+    tx_fallback: "keep" or "missing" when the picked transcript isn't in dbNSFP.
+
     Returns: (success: bool, temp_files: list[Path])
     """
     tmpdir = output_dir / "tmp_splitvep"
@@ -152,7 +236,9 @@ def split_vep_pipeline(in_vcf, out_vcf, conda_env, columns, output_dir, transcri
     tmp_split = tmpdir / "splitvep_firstsplit.vcf.gz"
     tmp_no_csq = tmpdir / "splitvep_noCSQ.vcf.gz"
     tmp_picked = tmpdir / "splitvep_picked.vcf"
-    temp_files = [tmp_split, tmp_no_csq, tmp_picked, tmpdir]
+    tmp_selected = tmpdir / "splitvep_selected.vcf.gz"
+    tmp_resolved = tmpdir / "splitvep_resolved.vcf"
+    temp_files = [tmp_split, tmp_no_csq, tmp_picked, tmp_selected, tmp_resolved, tmpdir]
 
     # Step 1: split-vep
     # Note: +split-vep will produce huge files with variant lines duplicated to split up all different possible consequences
@@ -178,33 +264,54 @@ def split_vep_pipeline(in_vcf, out_vcf, conda_env, columns, output_dir, transcri
     if not run_command(cmd_rmcsq):
         return False, temp_files
 
-    # Step 3: select transcripts
+    # Step 3: select transcripts -> a single 'selected' VCF (plain for priority,
+    # bgzipped for canonical/all).
     if transcript_pick == "priority":
         n = pick_transcripts_priority(tmp_no_csq, tmp_picked)
         logging.info(f"Selected {n} variants (MANE Select > canonical > first transcript)")
-        # Re-compress the picked plain VCF so it is bgzipped and indexable
-        cmd_select = [
-            "conda", "run", "-n", conda_env,
-            "bcftools", "view",
-            "-Oz", "-o", str(out_vcf), str(tmp_picked)
-        ]
+        selected = tmp_picked
     elif transcript_pick == "canonical":
         cmd_select = [
             "conda", "run", "-n", conda_env,
             "bcftools", "view",
             "--include", "vep_CANONICAL='YES'",
-            "-Oz", "-o", str(out_vcf), str(tmp_no_csq)
+            "-Oz", "-o", str(tmp_selected), str(tmp_no_csq)
         ]
+        if not run_command(cmd_select):
+            return False, temp_files
+        selected = tmp_selected
     else:  # "all"
         cmd_select = [
             "conda", "run", "-n", conda_env,
             "bcftools", "view",
-            "-Oz", "-o", str(out_vcf), str(tmp_no_csq)
+            "-Oz", "-o", str(tmp_selected), str(tmp_no_csq)
         ]
-    if not run_command(cmd_select):
+        if not run_command(cmd_select):
+            return False, temp_files
+        selected = tmp_selected
+
+    # Step 3b: transcript-aware resolution of per-transcript dbNSFP fields (optional)
+    if transcript_specific:
+        records, n_res, unmatched = resolve_transcript_specific(
+            selected, tmp_resolved, transcript_specific, fallback=tx_fallback)
+        logging.info(
+            f"Transcript-aware dbNSFP resolution: {records} records, "
+            f"{n_res} field-values resolved to the picked transcript, "
+            f"{unmatched} records with no dbNSFP transcript match "
+            f"(fallback='{tx_fallback}')")
+        final_src = tmp_resolved
+    else:
+        final_src = selected
+
+    # Step 4: write the bgzipped output and index it
+    cmd_final = [
+        "conda", "run", "-n", conda_env,
+        "bcftools", "view",
+        "-Oz", "-o", str(out_vcf), str(final_src)
+    ]
+    if not run_command(cmd_final):
         return False, temp_files
 
-    # Step 4: index final VCF
     cmd_index = [
         "conda", "run", "-n", conda_env,
         "bcftools", "index", "-t", str(out_vcf)
@@ -271,6 +378,16 @@ def main():
     if isinstance(columns, list):
         columns = ",".join(columns)
 
+    # Optional keys for transcript-aware dbNSFP resolution (option 3): the list of
+    # per-transcript dbNSFP INFO tags to reduce to the picked transcript's value,
+    # and the fallback when the picked transcript isn't in dbNSFP ('keep'|'missing').
+    with open(config_path) as _f:
+        _full_cfg = json.load(_f)
+    transcript_specific = _full_cfg.get("transcript_specific_fields", []) or []
+    tx_fallback = _full_cfg.get("transcript_match_fallback", "keep")
+    if tx_fallback not in ("keep", "missing"):
+        sys.exit(f"Error: transcript_match_fallback must be 'keep' or 'missing', got '{tx_fallback}'.")
+
     # ----------------------------
     # Setup logging
     # ----------------------------
@@ -303,6 +420,8 @@ def main():
     logging.info(f"Input_dir: {input_dir}")
     logging.info(f"Output_dir: {output_dir}")
     logging.info(f"Transcript_pick: {args.transcript_pick}")
+    if transcript_specific:
+        logging.info(f"Transcript-aware dbNSFP fields: {len(transcript_specific)} (fallback='{tx_fallback}')")
     logging.info("# Processing files")
 
     # ----------------------------
@@ -338,7 +457,9 @@ def main():
             logging.warning(f"Skipping unexpected file: {in_vcf}")
             continue
 
-        success, temp_files = split_vep_pipeline(in_vcf, out_vcf, conda_env, columns, output_dir, args.transcript_pick, args.keep_temp)
+        success, temp_files = split_vep_pipeline(
+            in_vcf, out_vcf, conda_env, columns, output_dir, args.transcript_pick,
+            args.keep_temp, transcript_specific=transcript_specific, tx_fallback=tx_fallback)
 
         if success:
             logging.info(f"{in_vcf.name} -> {out_vcf.name}")

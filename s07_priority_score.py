@@ -24,10 +24,11 @@ contributions are written out alongside the total so the score is auditable.
 
 A discrete tier (1 = highest priority, 4 = lowest) is also derived, combining
 ClinVar status, IMPACT, allele frequency and additional signals: strong SpliceAI
-(splice) and BayesDel (damaging) promote a variant, while a LOFTEE low-confidence
-(LC) HIGH-impact call is demoted out of the top tiers. All of these new signals
-degrade gracefully - if a field is absent (e.g. LOFTEE did not run), it simply
-has no effect. Tiers are coarse filters; the numeric score ranks finely within them.
+(splice) and BayesDel (damaging) promote a variant, while a HIGH-impact loss-of-
+function that ALoFT confidently predicts "Tolerant" is demoted out of the top tiers.
+All of these signals degrade gracefully - if a field is absent (e.g. not a LoF
+variant), it simply has no effect. Tiers are coarse filters; the numeric score
+ranks finely within them.
 
 All weights and thresholds live in the accompanying config file
 (s07_priority_score_config.json) so the scheme can be tuned without editing code.
@@ -94,6 +95,24 @@ def parse_float(value):
     if not candidates:
         return None
     return max(candidates)
+
+
+def pred_tokens(value):
+    """Split a categorical dbNSFP field into a set of non-missing, upper-cased tokens.
+
+    dbNSFP packs one value per transcript/isoform into a single field, '&'-joined
+    (its native ';' is illegal in a VCF INFO field, so VEP remaps it), with '.' for
+    isoforms it has no call for - e.g. 'LP&.&LP&P'. Matching a category therefore
+    means testing membership in the token set, not string-equality against the cell.
+    """
+    if value is None:
+        return set()
+    toks = set()
+    for part in re.split(r"[&,;|]", str(value)):
+        p = part.strip()
+        if p and p.lower() not in _MISSING:
+            toks.add(p.upper())
+    return toks
 
 
 def is_missing(value):
@@ -207,23 +226,43 @@ def assign_tier(row, cfg):
 
     revel = parse_float(row.get("vep_REVEL"))
     cadd = parse_float(row.get("vep_CADD_PHRED"))
-    am_pred = str(row.get("vep_AlphaMissense_pred", "")).strip().lower()
-    bayesdel_pred = str(row.get("vep_BayesDel_addAF_pred", "")).strip().upper()
     spliceai = _best_spliceai(row, cfg)
 
-    # LOFTEE confidence: a HIGH-impact call flagged low-confidence (LC) by LOFTEE
-    # is not a trustworthy LoF, so it should not earn the HIGH-impact boost into
-    # Tiers 1-2. It still reaches Tier 3 (which uses the raw impact) for review.
-    # If LOFTEE did not run, vep_LoF is empty and nothing is demoted.
-    lof = str(row.get("vep_LoF", "")).strip().upper()
+    # dbNSFP categorical predictors are '&'-joined across transcripts/isoforms (with
+    # '.' for isoforms with no call), so match on the SET of non-missing tokens
+    # rather than string-equality against the whole cell. AlphaMissense/BayesDel use
+    # short codes (e.g. LP/P, D), configured via the tier2_* keys.
+    am_tokens = pred_tokens(row.get("vep_AlphaMissense_pred"))
+    bayesdel_tokens = pred_tokens(row.get("vep_BayesDel_addAF_pred"))
+
+    am_targets = t.get("tier2_alphamissense_pred", [])
+    if isinstance(am_targets, str):
+        am_targets = [am_targets]
+    am_targets = {str(x).upper() for x in am_targets}
+    am_hit = bool(am_tokens & am_targets)
+
+    bayesdel_target = t.get("tier2_bayesdel_pred")
+    bayesdel_hit = bool(bayesdel_target) and str(bayesdel_target).upper() in bayesdel_tokens
+
+    # ALoFT loss-of-function check: for a LoF variant, dbNSFP's ALoFT predicts
+    # Tolerant / Recessive / Dominant (with a High/Low confidence). A HIGH-impact LoF
+    # that ALoFT confidently calls Tolerant - with no conflicting Recessive/Dominant
+    # isoform - is unlikely to be a true damaging LoF, so it should not earn the
+    # HIGH-impact boost into Tiers 1-2; it still reaches Tier 3 (raw impact) for
+    # review rather than being dropped. Non-LoF variants (ALoFT empty) are untouched.
+    # (This covers the LoF-quality role while LOFTEE is not enabled.)
+    aloft_tokens = pred_tokens(row.get("vep_Aloft_pred"))
+    aloft_conf_tokens = pred_tokens(row.get("vep_Aloft_Confidence"))
+    aloft_tolerant = "TOLERANT" in aloft_tokens and not (aloft_tokens & {"RECESSIVE", "DOMINANT"})
     high_impact = ("HIGH" in impact)
-    if t.get("loftee_lc_demote", True) and lof == "LC":
+    if (t.get("aloft_tolerant_demote", True)
+            and aloft_tolerant
+            and "HIGH" in aloft_conf_tokens):
         high_impact = False
 
     # Sentinel thresholds so a missing config key simply disables that rule.
     tier1_splice = t.get("tier1_spliceai_min", 1.1)
     tier2_splice = t.get("tier2_spliceai_min", 1.1)
-    bayesdel_hit = t.get("tier2_bayesdel_pred")
 
     # Benign ClinVar overrides everything -> lowest priority.
     if t.get("benign_demote", True) and clinvar in {"benign", "likely_benign"}:
@@ -241,16 +280,17 @@ def assign_tier(row, cfg):
     damaging = (
         (revel is not None and revel >= t["tier2_revel_min"])
         or (cadd is not None and cadd >= t["tier2_cadd_min"])
-        or (am_pred == t["tier2_alphamissense_pred"])
-        or (bool(bayesdel_hit) and bayesdel_pred == str(bayesdel_hit).upper())
+        or am_hit
+        or bayesdel_hit
         or (spliceai >= tier2_splice)
         or high_impact
     )
     if damaging and af_val <= t["tier2_max_af"]:
         return 2
 
-    # Tier 3: moderate/high impact, not common. Uses the raw impact so an LC LoF
-    # demoted from Tiers 1-2 is still surfaced here rather than dropped to Tier 4.
+    # Tier 3: moderate/high impact, not common. Uses the raw impact so a HIGH-impact
+    # LoF demoted from Tiers 1-2 (e.g. ALoFT Tolerant) is still surfaced here rather
+    # than dropped to Tier 4.
     if ("HIGH" in impact or "MODERATE" in impact) and af_val <= t["tier3_max_af"]:
         return 3
 

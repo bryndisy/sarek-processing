@@ -19,6 +19,7 @@
     "dbnsfp": "/home/by215/Resources/Databases/dbNSFP/dbNSFP5.1a/dbNSFP_for_VEP_SnpSift/dbNSFP5.1a.gz",
     "dbnsfp_tbi":   "/home/by215/Resources/Databases/dbNSFP/dbNSFP5.1a/dbNSFP_for_VEP_SnpSift/dbNSFP5.1a.gz.tbi",
     "dbnsfp_fields": [
+        "Ensembl_transcriptid",
         "clinvar_id","clinvar_clnsig","clinvar_trait","clinvar_review",
         "MutationTaster_score","MutationTaster_pred","MetaSVM_score","MetaSVM_pred",
         "MetaLR_score","MetaLR_pred","MetaRNN_score","MetaRNN_pred",

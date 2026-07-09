@@ -54,7 +54,10 @@
     "gnomAD4.1_joint_POPMAX_AC", 
     "gnomAD4.1_joint_POPMAX_AN", 
     "gnomAD4.1_joint_POPMAX_AF",
-    "gnomAD4.1_joint_POPMAX_nhomalt"
+    "gnomAD4.1_joint_POPMAX_nhomalt",
+    "gnomADv4_AF_joint",
+    "gnomADv4_AF_grpmax_joint",
+    "gnomADv4_nhomalt_joint"
   ],
 
   "_comment_transcript_specific": "dbNSFP fields that carry one '&'-joined value per Ensembl transcript (aligned to Ensembl_transcriptid). s04 reduces each to the value for the VEP-picked transcript (vep_Feature). Only fields known to align to Ensembl_transcriptid are listed; MutationTaster is intentionally excluded (its transcript model may not align). transcript_match_fallback: 'keep' leaves the raw list when the picked transcript isn't in dbNSFP; 'missing' sets it to '.'.",

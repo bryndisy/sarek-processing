@@ -50,6 +50,9 @@
     "vep_MAX_AF",
     "vep_MAX_AF_POPS",
     "vep_gnomAD4.1_joint_AF",
-    "vep_gnomAD4.1_joint_POPMAX_AF"
+    "vep_gnomAD4.1_joint_POPMAX_AF",
+    "vep_gnomADv4_AF_joint",
+    "vep_gnomADv4_AF_grpmax_joint",
+    "vep_gnomADv4_nhomalt_joint"
   ]
 }

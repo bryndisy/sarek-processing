@@ -150,7 +150,7 @@ def normalize_samplesheet(env_name, fasta: str, input_file: Path,
 # Helpers: Build commands and arguments
 # ----------------------------
 
-def build_vep_custom_args(plugins: dict, dir_plugins=None) -> str:
+def build_vep_custom_args(plugins: dict, dir_plugins=None, custom=None) -> str:
     """Build VEP's --vep_custom_args from the vep_plugins config.
 
     Each entry maps a plugin name to its argument(s):
@@ -168,6 +168,16 @@ def build_vep_custom_args(plugins: dict, dir_plugins=None) -> str:
     include the container's bundled Plugins directory (the one holding CADD.pm/
     REVEL.pm), otherwise those plugins stop being found. Left empty -> the flag is
     omitted and VEP uses its default plugin directory.
+
+    custom (optional, from the config key "vep_custom") adds VEP --custom annotations
+    (e.g. the gnomAD v4 sites VCF, which - unlike dbNSFP - covers indels and
+    non-coding variants). Each entry is a dict:
+      {"file": <path>, "short_name": <name>, "format": "vcf", "type": "exact",
+       "coords": "0", "fields": ["AF_joint", "AF_grpmax_joint", ...]}
+    -> --custom file=<path>,short_name=<name>,format=vcf,type=exact,coords=0,
+       fields=AF_joint%AF_grpmax_joint%...   (VEP names the results <name>_<field>,
+    so they arrive as CSQ subfields vep_<name>_<field> after split-vep). The file
+    must be bgzipped + tabix-indexed and bound into the container.
     """
     parts = ["--everything", "--total_length", "--offline", "--cache"]
     if dir_plugins:
@@ -182,10 +192,23 @@ def build_vep_custom_args(plugins: dict, dir_plugins=None) -> str:
             parts.append(f"--plugin {name},{','.join(map(str, path))}")
         else:
             parts.append(f"--plugin {name},{path}")
+    for spec in (custom or []):
+        fields = spec.get("fields", [])
+        if isinstance(fields, (list, tuple)):
+            fields = "%".join(str(f) for f in fields)
+        parts.append(
+            "--custom "
+            f"file={spec['file']},"
+            f"short_name={spec.get('short_name', 'custom')},"
+            f"format={spec.get('format', 'vcf')},"
+            f"type={spec.get('type', 'exact')},"
+            f"coords={spec.get('coords', '0')},"
+            f"fields={fields}"
+        )
     return " ".join(parts)
 
 def build_nextflow_command(env_name, input_file: Path, outdir: Path, config: dict, nextflow_config_file: str) -> list[str]:
-    vep_args = build_vep_custom_args(config["vep_plugins"], config.get("vep_dir_plugins"))
+    vep_args = build_vep_custom_args(config["vep_plugins"], config.get("vep_dir_plugins"), config.get("vep_custom"))
     prefix = ["conda", "run", "-n", env_name] if env_name else []
     return prefix + [
         "nextflow", "run", "nf-core/sarek", "-r", "3.5.1", "-resume",

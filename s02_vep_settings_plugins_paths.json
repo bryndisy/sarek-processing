@@ -16,6 +16,17 @@
             "indel=/home/by215/.vep/plugin_data/SpliceAI/spliceai_scores.raw.indel.hg38.vcf.gz"
         ]
     },
+    "_comment_vep_custom": "VEP --custom annotations. gnomAD v4.1 joint sites covers ALL variant classes (incl. indels/non-coding) genome-wide, unlike dbNSFP (coding SNVs only) - this is what gives common indels a frequency instead of '.'. To keep it small enough for WGS use, slim the download to just these 3 INFO fields (bcftools annotate -x '^INFO/AF_joint,INFO/AF_grpmax_joint,INFO/nhomalt_joint'), concat chroms into ONE bgzipped + tabix-indexed VCF, and bind it into the container (under /home/by215/.vep is already bound). Field names verified against the v4.1 joint header. Results arrive as CSQ subfields short_name_field, e.g. gnomADv4_AF_joint -> vep_gnomADv4_AF_joint after split-vep (already in s04/s06 columns and s07's rarity field).",
+    "vep_custom": [
+        {
+            "file": "/home/by215/.vep/plugin_data/gnomADv4/gnomad.joint.v4.1.sites.slim.vcf.gz",
+            "short_name": "gnomADv4",
+            "format": "vcf",
+            "type": "exact",
+            "coords": "0",
+            "fields": ["AF_joint", "AF_grpmax_joint", "nhomalt_joint"]
+        }
+    ],
     "dbnsfp": "/home/by215/Resources/Databases/dbNSFP/dbNSFP5.1a/dbNSFP_for_VEP_SnpSift/dbNSFP5.1a.gz",
     "dbnsfp_tbi":   "/home/by215/Resources/Databases/dbNSFP/dbNSFP5.1a/dbNSFP_for_VEP_SnpSift/dbNSFP5.1a.gz.tbi",
     "dbnsfp_fields": [

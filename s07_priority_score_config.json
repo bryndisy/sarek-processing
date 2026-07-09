@@ -41,8 +41,8 @@
     ]
   },
 
-  "rarity_af_field": "vep_gnomAD4.1_joint_POPMAX_AF",
-  "rarity_fallback_af_field": "vep_MAX_AF",
+  "rarity_af_field": "vep_gnomADv4_AF_grpmax_joint",
+  "rarity_fallback_af_field": ["vep_gnomAD4.1_joint_POPMAX_AF", "vep_MAX_AF"],
   "rarity_bins": [
     { "label": "novel",      "max_af": 0.0,    "score": 1.0 },
     { "label": "ultra_rare", "max_af": 0.0001, "score": 0.9 },

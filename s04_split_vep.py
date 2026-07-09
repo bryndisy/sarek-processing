@@ -108,10 +108,13 @@ def resolve_transcript_specific(in_vcf, out_vcf_plain, fields,
                    step, e.g. s07, still reduces it via max/any-hit)
       "missing" -> set to '.' (strict: dbNSFP has no value for the chosen transcript)
 
-    Returns (records, resolved_values, unmatched_records) for logging.
+    Returns (records, with_dbnsfp, matched, resolved_values) for logging, where
+    with_dbnsfp counts records that carry a dbNSFP transcript list at all (the rest
+    - synonymous/UTR/intronic/indels - have nothing to resolve) and matched counts
+    those whose picked transcript was found in that list.
     """
     want = set(fields)
-    records = resolved = unmatched = 0
+    records = with_dbnsfp = matched = resolved = 0
 
     with _open_maybe_gz(in_vcf) as fin, open(out_vcf_plain, "w") as fout:
         for line in fin:
@@ -125,9 +128,11 @@ def resolve_transcript_specific(in_vcf, out_vcf_plain, fields,
             feature = info.get(feature_key, "")
             txids = info.get(txid_key, "")
             tx_list = txids.split("&") if txids not in ("", ".") else []
+            if tx_list:
+                with_dbnsfp += 1
             idx = tx_list.index(feature) if feature and feature in tx_list else None
-            if idx is None:
-                unmatched += 1
+            if idx is not None:
+                matched += 1
 
             changed = False
             for f in want:
@@ -149,7 +154,7 @@ def resolve_transcript_specific(in_vcf, out_vcf_plain, fields,
             else:
                 fout.write(line)
 
-    return records, resolved, unmatched
+    return records, with_dbnsfp, matched, resolved
 
 
 def pick_transcripts_priority(in_vcf_gz, out_vcf_plain):
@@ -292,13 +297,15 @@ def split_vep_pipeline(in_vcf, out_vcf, conda_env, columns, output_dir, transcri
 
     # Step 3b: transcript-aware resolution of per-transcript dbNSFP fields (optional)
     if transcript_specific:
-        records, n_res, unmatched = resolve_transcript_specific(
+        records, with_dbnsfp, matched, n_res = resolve_transcript_specific(
             selected, tmp_resolved, transcript_specific, fallback=tx_fallback)
         logging.info(
-            f"Transcript-aware dbNSFP resolution: {records} records, "
-            f"{n_res} field-values resolved to the picked transcript, "
-            f"{unmatched} records with no dbNSFP transcript match "
-            f"(fallback='{tx_fallback}')")
+            f"Transcript-aware dbNSFP resolution: {records} records; "
+            f"{with_dbnsfp} carry dbNSFP transcript data, of which {matched} matched "
+            f"the picked transcript ({n_res} field-values resolved); "
+            f"{with_dbnsfp - matched} had dbNSFP data but no transcript match "
+            f"(fallback='{tx_fallback}'). "
+            f"The remaining {records - with_dbnsfp} records have no dbNSFP data.")
         final_src = tmp_resolved
     else:
         final_src = selected

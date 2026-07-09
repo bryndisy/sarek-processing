@@ -197,11 +197,23 @@ def score_insilico(row, cfg):
 
 
 def get_af(row, cfg):
-    """Population AF: preferred field, falling back to the secondary field."""
-    af = parse_float(row.get(cfg["rarity_af_field"]))
-    if af is None:
-        af = parse_float(row.get(cfg.get("rarity_fallback_af_field")))
-    return af
+    """Population AF: the preferred field, then each fallback field in order.
+
+    rarity_fallback_af_field may be a single field name or a list, letting the
+    rarity signal degrade gracefully across sources - e.g. gnomAD v4 (all variant
+    classes) -> dbNSFP gnomAD4.1 (coding SNVs) -> VEP MAX_AF (cache).
+    """
+    fields = [cfg["rarity_af_field"]]
+    fb = cfg.get("rarity_fallback_af_field")
+    if isinstance(fb, (list, tuple)):
+        fields += list(fb)
+    elif fb:
+        fields.append(fb)
+    for f in fields:
+        af = parse_float(row.get(f))
+        if af is not None:
+            return af
+    return None
 
 
 def score_rarity(af, cfg):

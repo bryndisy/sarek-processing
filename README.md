@@ -21,7 +21,7 @@ Runs the nf-core/sarek germline **calling** pipeline (from FASTQs to the joint-c
 VCF-level filtering in sub-steps: (1) keep only variants with FILTER == PASS; (2) mask low-confidence sample genotypes to missing (`./.`) where per-genotype depth or quality falls below threshold (default DP ≥ 10, GQ ≥ 20), using `bcftools +setGT`; (3) drop sites where, after masking, no sample carries an alt allele (all `0/0` or `./.`) — disable with `--keep-no-alt-sites`. Otherwise sites are retained and only failing genotypes are masked.
 
 - Step 4: [`s04_split_vep.py`](https://github.com/bryndisy/sarek-processing/blob/main/s04_split_vep.py)
-Splits up VEP annotations using bcftools +split-vep, it removes the extra CSQ column and filters on canonical transcripts. 
+Splits up VEP annotations using bcftools +split-vep, removes the extra CSQ column, selects one transcript per variant (default `priority`: MANE Select > canonical > first), and resolves per-transcript dbNSFP predictors to the picked transcript (see [Transcript-aware dbNSFP resolution](#transcript-aware-dbnsfp-resolution)). 
 
 - Step 5: [`s05_filter_impact.py`](https://github.com/bryndisy/sarek-processing/blob/main/s05_filter_impact.py)
 Splits filters VCF for HIGH and MODERATE impact variants.
@@ -169,6 +169,38 @@ python s02b_run_sarek_annotation.py \
 #### Why normalization is required before annotation
 VEP, dbNSFP and the gnomAD custom annotation all match variants by **exact `CHROM:POS:REF:ALT`**, and gnomAD/dbNSFP store records in **normalized** form — one ALT allele per line (biallelic), with indels **left-aligned and trimmed**. GATK's joint VCF does not guarantee that representation: it can emit **multiallelic** sites (several ALTs on one line) and indels that are not left-aligned. If such a record is annotated as-is, its representation never matches the database key, so the variant comes back with **no gnomAD frequency** and looks *novel* even when it is common (this is what made a 27%-frequency variant appear absent from gnomAD). `bcftools norm -m -any -f <fasta>` fixes both problems — `-m -any` splits multiallelics into biallelic records and `-f <fasta>` left-aligns/trims against the reference. Sarek does **not** normalize before VEP, so Step 2b does it explicitly on every run.
 
+#### gnomAD v4 frequencies (VEP `--custom`)
+Even after normalization, some **common variants still show `.` for every frequency field** — because the two default sources don't cover them:
+- **dbNSFP** (`gnomAD4.1_joint_*`) has gnomAD v4.1 frequencies but is a **coding-SNV database** — **no indels**, no deep-intronic/intergenic.
+- **VEP's cache** (`gnomADe_AF`/`gnomADg_AF`/`MAX_AF`) *does* carry gnomAD v4.1 (recent GRCh38 caches; check `homo_sapiens/*_GRCh38/info.txt` for `source_gnomADe`/`source_gnomADg`), **but** those frequencies are attached to **co-located known (Ensembl) variants**: VEP reports an AF only when it matches your record to such a variant at the same representation. Large/complex indels often don't match (their `Existing_variation` comes back empty), so they return `.` even though gnomAD v4.1 contains them. It's a *matching* gap, not a version gap.
+
+So a common indel (e.g. the 45 bp deletion `chr12:7190512`, 27% in gnomAD v4) falls in the gap and would be wrongly scored as novel. The fix is a **VEP `--custom` annotation against the gnomAD v4.1 joint sites VCF**, which matches by exact `POS:REF:ALT` (your normalized VCF is already aligned to gnomAD v4's representation) and covers **all** variant classes. It is configured via the `vep_custom` key in `s02_vep_settings_plugins_paths.json`:
+
+```json
+"vep_custom": [
+  { "file": ".../gnomad.joint.v4.1.sites.slim.vcf.gz", "short_name": "gnomADv4",
+    "format": "vcf", "type": "exact", "coords": "0",
+    "fields": ["AF_joint", "AF_grpmax_joint", "nhomalt_joint"] }
+]
+```
+Each field arrives as a CSQ subfield `gnomADv4_<field>` → `vep_gnomADv4_<field>` after Step 4 (already in the `s04`/`s06` column configs). Step 7's rarity uses a **fallback chain**: `vep_gnomADv4_AF_grpmax_joint` → `vep_gnomAD4.1_joint_POPMAX_AF` (dbNSFP) → `vep_MAX_AF` (cache), so the best available frequency is used and a genuine absence from gnomAD v4 correctly reads as rare.
+
+**Preparing the gnomAD v4 file (WGS-friendly, low storage).** The full v4 sites VCFs are huge, but that's the *hundreds of per-population INFO fields*, not the variant count — keep only the three you need and stream so no full file is stored, giving one genome-wide, tabix-indexed VCF:
+```bash
+KEEP='^INFO/AF_joint,INFO/AF_grpmax_joint,INFO/nhomalt_joint'   # ^ = keep ONLY these
+DEST=/home/by215/.vep/plugin_data/gnomADv4
+BASE=https://storage.googleapis.com/gcp-public-data--gnomad/release/4.1/vcf/joint
+mkdir -p "$DEST"
+for c in chr{1..22} chrX chrY; do
+  bcftools annotate -x "$KEEP" "$BASE/gnomad.joint.v4.1.sites.$c.vcf.bgz" \
+    -Oz -o "$DEST/slim.$c.vcf.gz"          # htslib streams the remote file; only the slim output is written
+done
+bcftools concat "$DEST"/slim.chr*.vcf.gz -Oz -o "$DEST/gnomad.joint.v4.1.sites.slim.vcf.gz"
+tabix -p vcf "$DEST/gnomad.joint.v4.1.sites.slim.vcf.gz"
+rm -f "$DEST"/slim.chr*.vcf.gz
+```
+Keep it under a directory already bound into the container (`/home/by215/.vep` is), or add a `--bind` in `annotation.config`. Because the `s04` column list references `gnomADv4_*`, **re-run Step 2b (to add the `--custom` annotation) before Step 4** — same staging rule as `Ensembl_transcriptid`. Verify the `fields` against the VCF header if you use a different gnomAD release (`bcftools view -h … | grep '##INFO'`; v4 uses `grpmax`, not `popmax`).
+
 ### Step 3 — filter VCF (PASS + genotype DP/GQ mask)
 - **Inputs:** the joint-genotyped VCF under `…/output/sarek_results/annotation/haplotypecaller/joint_variant_calling/` (found automatically).
 - **Config:** none (genotype thresholds are CLI options).
@@ -194,6 +226,18 @@ python s04_split_vep.py \
   --config s04_split_vep_columns.json \
   --transcript-pick priority
 ```
+
+#### Transcript-aware dbNSFP resolution
+Several dbNSFP predictors are **per-transcript**: for one variant, dbNSFP stores a value for *each* Ensembl transcript, packed into a single field and `&`-joined (its native `;` is illegal in a VCF INFO field, so VEP remaps it), with `.` for transcripts it has no call for — e.g. `vep_AlphaMissense_pred = LB&.&LP&P`. This is **not** multiallelic (the joint VCF is normalized to biallelic in Step 2b); it is one value per isoform. `--transcript-pick` chooses one *VEP* transcript for the core fields (`IMPACT`, `HGVSc`, `SIFT`, …) but does **not** reach inside these dbNSFP subfields, so without extra handling they reach the output as raw `&`-lists — which then break any equality/numeric filter downstream (e.g. `AlphaMissense_pred == "P"` never matches `LB&.&LP&P`).
+
+Step 4 resolves this by reducing each per-transcript dbNSFP field to the single value **for the transcript VEP actually picked** (`vep_Feature`), matching it against dbNSFP's own transcript order (`vep_Ensembl_transcriptid`). Both keys must be present in the split columns, and `Ensembl_transcriptid` must be in the annotation — so it is included in `dbnsfp_fields` (`s02_vep_settings_plugins_paths.json`) and both are in `s04_split_vep_columns.json`. Configured in `s04_split_vep_columns.json`:
+
+- **`transcript_specific_fields`** — the `vep_`-prefixed INFO tags to resolve. Defaults cover the predictors known to align to `Ensembl_transcriptid` (AlphaMissense, MetaRNN, Aloft_*). `MutationTaster` is deliberately excluded (its transcript model may not align); variant-level predictors (`BayesDel`, `MetaSVM`, `MetaLR`, `ClinPred`) are single-valued already, so they need no resolution.
+- **`transcript_match_fallback`** — what to do when the picked transcript is not in dbNSFP's list (or a field's value count doesn't align, a guard against mis-ordered fields):
+  - `keep` (default) — leave the raw `&`-list unchanged. No data is lost, and Step 7 still reduces it (max for scores, any-hit for categories).
+  - `missing` — set to `.` (strict: dbNSFP has no value for the chosen transcript).
+
+The Step 4 log reports how it went, e.g. *“76051 records; 10555 carry dbNSFP transcript data, of which 10553 matched the picked transcript (61995 field-values resolved); 2 had dbNSFP data but no transcript match; the remaining 65496 records have no dbNSFP data.”* A high "no dbNSFP data" count is expected — dbNSFP only annotates missense/splice SNVs, so most WES records (synonymous/UTR/intronic/indels) have nothing to resolve. The number to watch is **"had dbNSFP data but no transcript match"**: if it is large, the picked `vep_Feature` IDs are not aligning with dbNSFP's `Ensembl_transcriptid` (e.g. a version-suffix mismatch) and should be investigated.
 
 ### Step 5 — filter to HIGH and MODERATE impact
 - **Inputs:** the `*split_vep.vcf.gz` from Step 4 (found automatically).

@@ -3,4 +3,4 @@ work
 *.log*
 .nextflow
 __pycache__
-dbNSFP5_annotation_fields.txt
+misc

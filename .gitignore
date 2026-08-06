@@ -4,3 +4,7 @@ work
 .nextflow
 __pycache__
 misc
+
+
+# Ignore most things in docs
+docs/*

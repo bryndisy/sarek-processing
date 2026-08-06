@@ -306,19 +306,23 @@ Step 7 ranks variants two complementary ways: a continuous **priority score** (0
 
 ### Priority score (0–100)
 
-The score is the sum of four weighted components. Each component is normalised to 0–1, then multiplied by its weight; the weights sum to 100, so a variant maxing out every component scores 100. The four per-component contributions are written to the output TSV (`priority_impact`, `priority_clinvar`, `priority_insilico`, `priority_rarity`) alongside the total (`priority_score`) so every score is auditable.
+The score is the sum of four weighted components. Each component is first normalised to a 0–1 value, then multiplied by its weight. **The weight is the component's *maximum* contribution, not a fixed one** — a component only contributes its full weight when its normalised value is 1.0 (e.g. IMPACT contributes 30 for HIGH but 18 for MODERATE). The weights sum to 100, so a variant maxing out all four components scores 100. The four per-component contributions are written to the output TSV (`priority_impact`, `priority_clinvar`, `priority_insilico`, `priority_rarity`) alongside the total (`priority_score`) so every score is auditable.
 
-| Component | Weight | What it measures | Normalised value (0–1) |
-|-----------|-------:|------------------|------------------------|
-| **IMPACT** | 30 | VEP consequence severity | HIGH = 1.0, MODERATE = 0.6, LOW = 0.15, MODIFIER = 0.0 |
-| **ClinVar** | 30 | Clinical significance (CLNSIG) | Pathogenic = 1.0, Likely_pathogenic = 0.8, Conflicting = 0.4, Uncertain = 0.3, Benign/Likely_benign = 0.0 |
-| **In-silico** | 25 | Pathogenicity predictors | Mean of available missense predictors: REVEL, AlphaMissense, MetaRNN, ClinPred (all 0–1) and CADD_PHRED (capped at 40 → 1.0), then **lifted by the strongest SpliceAI delta score** via `max()` |
-| **Rarity** | 15 | Population allele frequency | novel = 1.0, ≤0.0001 = 0.9, ≤0.001 = 0.6, ≤0.01 = 0.3, common = 0.0 |
+The table below shows each component's weight (its ceiling), the normalised value per category, and the resulting **actual contribution** (weight × normalised value):
+
+| Component | Max (weight) | What it measures | Normalised value → **actual contribution** |
+|-----------|-------------:|------------------|--------------------------------------------|
+| **IMPACT** | 30 | VEP consequence severity | HIGH 1.0 → **30**, MODERATE 0.6 → **18**, LOW 0.15 → **4.5**, MODIFIER 0.0 → **0** |
+| **ClinVar** | 30 | Clinical significance (CLNSIG) | Pathogenic 1.0 → **30**, Likely_pathogenic 0.8 → **24**, Conflicting 0.4 → **12**, Uncertain 0.3 → **9**, Benign/Likely_benign 0.0 → **0** |
+| **In-silico** | 25 | Pathogenicity predictors | 25 × (mean of available predictors: REVEL, AlphaMissense, MetaRNN, ClinPred (0–1) and CADD_PHRED (capped at 40 → 1.0)), then **lifted by the strongest SpliceAI delta score** via `max()` |
+| **Rarity** | 15 | Population allele frequency | novel 1.0 → **15**, ≤0.0001 0.9 → **13.5**, ≤0.001 0.6 → **9**, ≤0.01 0.3 → **4.5**, common 0.0 → **0** |
+
+Because Step 5 already restricts to HIGH/MODERATE impact, in practice the IMPACT component is always **30** (HIGH) or **18** (MODERATE).
 
 Notes:
 - **In-silico** averages only the predictors that are present, so a variant isn't penalised for missing scores; if none are present the component is 0. The averaged predictors are configured in `insilico.components`.
 - **SpliceAI** is folded in as `max(missense_mean, best_SpliceAI_DS)` (the largest of the four `SpliceAI_pred_DS_*` delta scores), so a splice-affecting variant that the missense predictors miss still scores, without a weak splice signal diluting a strong missense one.
-- **Rarity** uses gnomAD POPMAX AF (`gnomAD4.1_joint_POPMAX_AF`), falling back to VEP `MAX_AF`. A **missing AF is treated as novel** (highest rarity), on the assumption that absence from gnomAD means rare rather than unmeasured.
+- **Rarity** uses a gnomAD POPMAX/grpmax AF via a **fallback chain** — `vep_gnomADv4_AF_grpmax_joint` (gnomAD v4 `--custom`, all variant classes) → `vep_gnomAD4.1_joint_POPMAX_AF` (dbNSFP, coding SNVs) → `vep_MAX_AF` (VEP cache) — taking the first available. A **missing AF is treated as novel** (highest rarity), on the assumption that absence from gnomAD means rare rather than unmeasured.
 - The score **ranks** variants; it is not a probability of pathogenicity.
 
 ### Priority tier (1 = highest, 4 = lowest)

@@ -4,7 +4,7 @@ work
 .nextflow
 __pycache__
 misc
+docs
+README_more_details_to_review.md
 
 
-# Ignore most things in docs
-docs/*
